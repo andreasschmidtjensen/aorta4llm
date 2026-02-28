@@ -1,0 +1,35 @@
+organization: code_review_workflow
+
+roles:
+  implementer:
+    objectives:
+      - feature_implemented(Feature)
+      - tests_passing(Feature)
+    capabilities:
+      - read_file
+      - write_file
+      - execute_command
+
+  reviewer:
+    objectives:
+      - code_reviewed(Feature)
+      - review_documented(Feature)
+    capabilities:
+      - read_file
+
+dependencies:
+  - role: reviewer
+    depends_on: implementer
+    for: feature_implemented(Feature)
+
+norms:
+  # Implementer must not modify files outside assigned scope
+  - role: implementer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: not(in_scope(Path, AssignedScope))
+
+rules:
+  # in_scope checks if Path starts with Scope using current_scope bridge
+  - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
