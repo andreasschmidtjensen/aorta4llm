@@ -8,13 +8,14 @@
 %% ============================================================
 
 % Obl-Act: Activate obligation when condition holds and objective not achieved
-% Guard: only evaluate ground conditions (non-ground handled at check time)
+% Uses catch to handle non-ground conditions that may cause instantiation
+% errors. Unlike prohibitions, obligation conditions can bind variables
+% through unification (e.g., feature_implemented(F) unifies with achieved/1).
 nc_activate_obligation :-
     forall(
         (   rea(Agent, Role),
             cond(Role, obliged, Obj, Deadline, Cond),
-            ground(Cond),
-            call(Cond),
+            catch(call(Cond), error(instantiation_error, _), fail),
             \+ achieved(Obj),
             \+ norm(Agent, Role, obliged, Obj, Deadline)
         ),

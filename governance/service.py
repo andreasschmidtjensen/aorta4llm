@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from governance.compiler import compile_org_spec
-from governance.engine import GovernanceEngine, PermissionResult
+from governance.engine import GovernanceEngine, NotifyResult, PermissionResult
 
 
 class GovernanceService:
@@ -32,6 +32,20 @@ class GovernanceService:
         if "scope" not in params and agent in self._agent_scopes:
             params["scope"] = self._agent_scopes[agent]
         return self._engine.check_permission(agent, role, action, params)
+
+    def notify_action(
+        self,
+        agent: str,
+        role: str,
+        achieved: list[str] | None = None,
+        deadlines_reached: list[str] | None = None,
+    ) -> NotifyResult:
+        """Notify the engine of state changes after a tool call."""
+        return self._engine.notify_action(agent, role, achieved, deadlines_reached)
+
+    def get_obligations(self, agent: str, role: str) -> dict:
+        """Return active obligations and generated options for an agent."""
+        return self._engine.get_obligations(agent, role)
 
 
 def run_stdio_service(org_spec_path: str):
@@ -68,6 +82,31 @@ def run_stdio_service(org_spec_path: str):
                 "reason": result.reason,
                 "violation": result.violation,
             })
+
+        elif method == "notify_action":
+            result = service.notify_action(
+                request["agent"],
+                request["role"],
+                achieved=request.get("achieved"),
+                deadlines_reached=request.get("deadlines_reached"),
+            )
+            _respond({
+                "norms_changed": [
+                    {
+                        "type": c.type,
+                        "deontic": c.deontic,
+                        "objective": c.objective,
+                        "deadline": c.deadline,
+                    }
+                    for c in result.norms_changed
+                ]
+            })
+
+        elif method == "get_obligations":
+            result = service.get_obligations(
+                request["agent"], request["role"]
+            )
+            _respond(result)
 
         else:
             _respond({"error": f"unknown method: {method}"})

@@ -30,6 +30,15 @@ norms:
     deadline: false
     condition: not(in_scope(Path, AssignedScope))
 
+  # Implementer must have tests passing before requesting review
+  - role: implementer
+    type: obliged
+    objective: tests_passing(Feature)
+    deadline: review_requested(Feature)
+    condition: feature_implemented(Feature)
+
 rules:
   # in_scope checks if Path starts with Scope using current_scope bridge
   - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
+  # Connect conditions/objectives to achieved state
+  - "feature_implemented(F) :- achieved(feature_implemented(F))."

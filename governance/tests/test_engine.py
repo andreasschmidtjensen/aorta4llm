@@ -1,9 +1,9 @@
-"""Tests for the governance engine — Phase 1 success criteria."""
+"""Tests for the governance engine."""
 
 import pytest
 
 from governance.compiler import compile_org_spec
-from governance.engine import GovernanceEngine, PermissionResult
+from governance.engine import GovernanceEngine, NormChange, NotifyResult, PermissionResult
 
 _ORG_SPEC_PATH = None
 
@@ -131,3 +131,146 @@ class TestEngineSetup:
         eng.enact_role("test-agent", "implementer")
         results = list(eng._prolog.query("rea('test-agent', implementer)"))
         assert len(results) > 0
+
+
+class TestObligationLifecycle:
+    """Phase 2 success criteria: obligation activation, fulfillment, violation."""
+
+    def test_obligation_activates_on_condition(self, engine):
+        """Obligation activates when its condition (feature_implemented) is met."""
+        result = engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["feature_implemented(auth)"],
+        )
+        activated = [c for c in result.norms_changed if c.type == "activated"]
+        assert len(activated) == 1
+        assert "tests_passing" in activated[0].objective
+        assert activated[0].deontic == "obliged"
+
+    def test_obligation_not_activated_without_condition(self, engine):
+        """Obligation does not activate if condition is not met."""
+        result = engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["some_other_thing(x)"],
+        )
+        activated = [c for c in result.norms_changed if c.type == "activated"]
+        assert len(activated) == 0
+
+    def test_obligation_fulfilled(self, engine):
+        """Obligation is fulfilled when its objective is achieved."""
+        # Step 1: Activate obligation
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["feature_implemented(auth)"],
+        )
+        # Step 2: Fulfill obligation
+        result = engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["tests_passing(auth)"],
+        )
+        fulfilled = [c for c in result.norms_changed if c.type == "fulfilled"]
+        assert len(fulfilled) == 1
+        assert "tests_passing" in fulfilled[0].objective
+
+    def test_obligation_violated(self, engine):
+        """Obligation is violated when deadline reached without fulfillment."""
+        # Step 1: Activate obligation
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["feature_implemented(auth)"],
+        )
+        # Step 2: Deadline reached without fulfillment
+        result = engine.notify_action(
+            "impl-agent-1", "implementer",
+            deadlines_reached=["review_requested(auth)"],
+        )
+        violated = [c for c in result.norms_changed if c.type == "violated"]
+        assert len(violated) == 1
+        assert "tests_passing" in violated[0].objective
+
+    def test_violation_recorded_in_prolog(self, engine):
+        """After violation, viol/4 fact exists in Prolog."""
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["feature_implemented(auth)"],
+        )
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            deadlines_reached=["review_requested(auth)"],
+        )
+        viols = list(engine._prolog.query(
+            "viol('impl-agent-1', implementer, obliged, Obj)"
+        ))
+        assert len(viols) > 0
+
+
+class TestGetObligations:
+    """Tests for the get_obligations endpoint."""
+
+    def test_no_obligations_initially(self, engine):
+        """No active obligations before any state changes."""
+        result = engine.get_obligations("impl-agent-1", "implementer")
+        assert result["obligations"] == []
+
+    def test_obligation_appears_after_activation(self, engine):
+        """Active obligation shows up in get_obligations."""
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["feature_implemented(auth)"],
+        )
+        result = engine.get_obligations("impl-agent-1", "implementer")
+        assert len(result["obligations"]) == 1
+        obl = result["obligations"][0]
+        assert "tests_passing" in obl["objective"]
+        assert "review_requested" in obl["deadline"]
+        assert obl["deontic"] == "obliged"
+        assert obl["status"] == "active"
+
+    def test_obligation_disappears_after_fulfillment(self, engine):
+        """Fulfilled obligation no longer shows in get_obligations."""
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["feature_implemented(auth)"],
+        )
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["tests_passing(auth)"],
+        )
+        result = engine.get_obligations("impl-agent-1", "implementer")
+        assert len(result["obligations"]) == 0
+
+
+class TestOptionGeneration:
+    """Tests for the OG phase option generation."""
+
+    def test_norm_option_from_active_obligation(self, engine):
+        """Active obligation generates a norm option."""
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["feature_implemented(auth)"],
+        )
+        result = engine.get_obligations("impl-agent-1", "implementer")
+        norm_opts = [o for o in result["options"] if o["type"] == "norm"]
+        assert len(norm_opts) >= 1
+        assert any("tests_passing" in o["objective"] for o in norm_opts)
+
+    def test_violation_option_after_violation(self, engine):
+        """Violation generates a violation option."""
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            achieved=["feature_implemented(auth)"],
+        )
+        engine.notify_action(
+            "impl-agent-1", "implementer",
+            deadlines_reached=["review_requested(auth)"],
+        )
+        result = engine.get_obligations("impl-agent-1", "implementer")
+        viol_opts = [o for o in result["options"] if o["type"] == "violation"]
+        assert len(viol_opts) >= 1
+
+    def test_enact_options_for_unenacted_roles(self, engine):
+        """Roles the agent hasn't enacted appear as enact options."""
+        result = engine.get_obligations("impl-agent-1", "implementer")
+        enact_opts = [o for o in result["options"] if o["type"] == "enact"]
+        # reviewer role is available but not enacted by this agent
+        assert any(o["role"] == "reviewer" for o in enact_opts)
