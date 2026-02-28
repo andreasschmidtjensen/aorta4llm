@@ -17,9 +17,11 @@ Requires SWI-Prolog: `brew install swi-prolog`
 
 - **governance/prolog/**: Prolog source files — metamodel predicates and NC phase rules. Never add `:- consult(...)` directives; Python engine controls load order.
 - **governance/compiler.py**: YAML org specs → Prolog facts (`CompiledSpec.facts`, no trailing `.`) and rules (`CompiledSpec.rules`, with trailing `.`).
-- **governance/engine.py**: pyswip wrapper. Consults metamodel.pl then nc.pl. Exposes `check_permission`.
+- **governance/engine.py**: pyswip wrapper. Consults metamodel.pl, nc.pl, og.pl. Exposes `check_permission`, `notify_action`, `get_obligations`.
 - **governance/service.py**: High-level API with agent registration and scope management.
+- **integration/hooks.py**: Claude Code hook integration — PreToolUse/PostToolUse handlers, CLI entry point, event-sourced state persistence, system prompt injection from obligations.
 - **org-specs/**: YAML organizational specifications following the metamodel schema from DESIGN.md.
+- **examples/three_role_demo/demo.py**: Runnable three-role workflow simulation.
 
 ## Key Design Constraints
 
@@ -37,6 +39,31 @@ Requires SWI-Prolog: `brew install swi-prolog`
 - Prolog: section headers with `%% ===...===`, declare all dynamic predicates explicitly, comment non-obvious rules.
 - Tests: one test file per module in `governance/tests/`, use pytest fixtures, group related tests in classes.
 - Org specs: YAML mirrors the metamodel structure from DESIGN.md Table 6.1.
+
+## Claude Code Integration
+
+Configure hooks in `.claude/settings.local.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Write|Edit|Bash",
+      "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/three_role_workflow.yaml --agent $AGENT_NAME"
+    }]
+  }
+}
+```
+
+Register agents before starting:
+
+```bash
+uv run python -m integration.hooks register \
+    --org-spec org-specs/three_role_workflow.yaml \
+    --agent impl-1 --role implementer --scope src/auth/
+```
+
+Run the demo: `uv run python examples/three_role_demo/demo.py`
 
 ## Reference
 

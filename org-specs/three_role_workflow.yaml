@@ -1,0 +1,72 @@
+organization: three_role_workflow
+
+roles:
+  architect:
+    objectives:
+      - system_design_complete(Project)
+      - architecture_documented(Project)
+    capabilities:
+      - read_file
+      - write_file
+      - spawn_agent
+
+  implementer:
+    objectives:
+      - feature_implemented(Feature)
+      - tests_passing(Feature)
+    capabilities:
+      - read_file
+      - write_file
+      - execute_command
+
+  reviewer:
+    objectives:
+      - code_reviewed(Feature)
+      - review_documented(Feature)
+    capabilities:
+      - read_file
+
+dependencies:
+  - role: implementer
+    depends_on: architect
+    for: system_design_complete(Project)
+  - role: reviewer
+    depends_on: implementer
+    for: feature_implemented(Feature)
+
+norms:
+  # Implementer must not modify files outside assigned scope
+  - role: implementer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: not(in_scope(Path, AssignedScope))
+
+  # Implementer must have tests passing before requesting review
+  - role: implementer
+    type: obliged
+    objective: tests_passing(Feature)
+    deadline: review_requested(Feature)
+    condition: feature_implemented(Feature)
+
+  # Reviewer must not modify source code
+  - role: reviewer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: is_source_file(Path)
+
+  # Reviewer is obliged to document review before approving
+  - role: reviewer
+    type: obliged
+    objective: review_documented(Feature)
+    deadline: review_approved(Feature)
+    condition: code_reviewed(Feature)
+
+rules:
+  - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
+  - "feature_implemented(F) :- achieved(feature_implemented(F))."
+  - "code_reviewed(F) :- achieved(code_reviewed(F))."
+  - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
+  - "is_source_file(Path) :- atom_concat(_, '.ts', Path)."
+  - "is_source_file(Path) :- atom_concat(_, '.js', Path)."

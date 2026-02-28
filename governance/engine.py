@@ -125,8 +125,8 @@ class GovernanceEngine:
                 return PermissionResult(
                     permitted=False,
                     reason=(
-                        f"prohibition active: {action_term} blocked — "
-                        f"path not in assigned scope {scope}"
+                        f"prohibition active: {action_term} blocked "
+                        f"for {agent} in role {role}"
                     ),
                     violation=violation_term,
                 )
