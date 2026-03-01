@@ -7,7 +7,6 @@ name = "aorta4llm"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "pyswip" },
     { name = "pyyaml" },
 ]
 
@@ -16,17 +15,22 @@ dashboard = [
     { name = "flask" },
 ]
 dev = [
+    { name = "pyswip" },
     { name = "pytest" },
+]
+prolog = [
+    { name = "pyswip" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "flask", marker = "extra == 'dashboard'", specifier = ">=3.0" },
-    { name = "pyswip", specifier = ">=0.3.1" },
+    { name = "pyswip", marker = "extra == 'dev'", specifier = ">=0.3.1" },
+    { name = "pyswip", marker = "extra == 'prolog'", specifier = ">=0.3.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
-provides-extras = ["dev", "dashboard", "orchestrator"]
+provides-extras = ["prolog", "dev", "dashboard", "orchestrator"]
 
 [[package]]
 name = "blinker"

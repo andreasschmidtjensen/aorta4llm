@@ -1,50 +1,76 @@
-# aorta4llm
+# aorta4llm — Deterministic Governance for AI Agent Teams
 
-Deterministic organizational governance for LLM agent systems. Enforce role-based constraints — who can write what, what must happen before review, which agents need tests passing — using formal norms backed by SWI-Prolog.
+When you deploy multiple LLM agents, you need to control who can do what. System prompts are suggestions — agents can ignore them. Tool allowlists are static — they can't express "allowed after the architect approves." And nobody tracks whether the reviewer actually reviewed.
 
-Built on the [AORTA reasoning framework](https://orbit.dtu.dk/en/publications/the-aorta-reasoning-framework) (Jensen, 2015). LLMs handle natural language and planning; Prolog handles constraint enforcement. No LLM decides whether a rule applies — the logic engine does.
+aorta4llm moves governance outside the context window. An organizational spec defines roles, prohibitions, and obligations. A logic engine enforces them deterministically on every tool call — no LLM decides whether a rule applies.
 
-## What it does
+## The problem
 
-You define an **organizational specification** in YAML — roles, capabilities, prohibitions, obligations. aorta4llm compiles this to Prolog and enforces it on every tool call:
+**Prompts aren't enforcement.** Telling an agent "you are a reviewer, do not modify source files" in a system prompt is a suggestion. The agent can still call the Write tool on a `.py` file. Context window pressure, long conversations, and ambiguous instructions make compliance unreliable.
 
-- **Prohibitions**: An implementer scoped to `src/auth/` is blocked from writing to `src/api/`. A reviewer cannot modify source files.
-- **Obligations**: After implementing a feature, tests must pass before requesting review. After reviewing code, the review must be documented.
-- **Scope enforcement**: Each agent is assigned a file path scope. Writes outside the scope are deterministically blocked.
+**Static allowlists can't express conditions.** "The implementer may write to `src/auth/` but only after the architecture has been reviewed" requires runtime state. A JSON config of `{allowed_tools: ["Write"]}` cannot express this.
 
-All enforcement happens via Claude Code hooks — the governance check runs before each tool call and blocks or approves it.
+**Nobody tracks obligations.** "The reviewer must complete their review before the deadline" is a real organizational requirement. When it's violated, you need an auditable record — not a hope that the agent followed instructions.
+
+## What this does
+
+- **Conditional prohibitions**: An implementer scoped to `src/auth/` is blocked from writing to `src/api/`. A reviewer cannot modify `.py/.ts/.js` files. An implementer cannot write code until the architecture is reviewed. All enforced before the tool call executes.
+- **Obligations with deadlines**: After implementing a feature, tests must pass before requesting review. After accepting a review, the reviewer must document findings before the deadline. The system tracks activation, fulfillment, and violation.
+- **Violation detection**: When a deadline is reached and the obligation is unfulfilled, a formal violation is recorded. Queryable, auditable, actionable.
+- **Scope enforcement**: Each agent is assigned a file path scope. Writes outside scope are deterministically blocked — not suggested against, blocked.
+
+## See it in action
+
+```bash
+uv run python examples/obligation_demo/demo.py
+```
+
+```
+  Act 1: The Architecture Gate
+
+  BLOCK  write_file(src/auth/handler.py)
+         reason: prohibition active — architecture not reviewed for scope
+
+  Act 2: Architecture Review Lifts the Gate
+
+  -> Achieved: architecture_reviewed('src/auth/')
+  PERMIT write_file(src/auth/handler.py)
+
+  Act 3: The Deadline Violation
+
+  -> Obligation ACTIVATED: obliged code_reviewed(auth)
+     deadline: review_deadline(auth)
+
+  !! VIOLATION DETECTED: obliged code_reviewed(auth)
+     The reviewer failed to complete review before the deadline.
+```
+
+Same file, same agent, same role — permitted after organizational state changed. Then an obligation tracked over time, a missed deadline, and a recorded violation. No JSON allowlist can do this.
 
 ## Prerequisites
 
 - Python >= 3.10
-- [SWI-Prolog](https://www.swi-prolog.org/): `brew install swi-prolog` (macOS) or `apt install swi-prolog` (Linux)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
-## Quick start (try it in an existing project)
+SWI-Prolog is **optional** — the default pure-Python engine requires no external dependencies. Install `pyswip` and SWI-Prolog only if you need the Prolog backend for formal verification workflows.
 
-### 1. Install aorta4llm
+## Quick start
 
-From the aorta4llm source directory:
+### 1. Install
 
 ```bash
-# With uv (recommended)
+uv pip install -e "/path/to/aorta4llm"
+
+# With dashboard (adds Flask):
 uv pip install -e "/path/to/aorta4llm[dashboard]"
 
-# Or with pip
-pip install -e "/path/to/aorta4llm[dashboard]"
+# With Prolog backend (adds pyswip, requires SWI-Prolog):
+uv pip install -e "/path/to/aorta4llm[prolog]"
 ```
-
-The `[dashboard]` extra includes Flask for the live monitoring web UI. Omit it if you only need the hooks.
 
 ### 2. Define your organization
 
-Create an org spec file in your project. This example defines three roles for a feature development workflow:
-
-```bash
-mkdir -p org-specs
-```
-
-Create `org-specs/feature_workflow.yaml`:
+Create an org spec YAML file. This example defines three roles for a feature development workflow:
 
 ```yaml
 organization: feature_workflow
@@ -53,7 +79,6 @@ roles:
   architect:
     objectives:
       - system_design_complete(Feature)
-      - architecture_documented(Feature)
     capabilities:
       - read_file
       - write_file
@@ -71,17 +96,8 @@ roles:
   reviewer:
     objectives:
       - code_reviewed(Feature)
-      - review_documented(Feature)
     capabilities:
       - read_file
-
-dependencies:
-  - role: implementer
-    depends_on: architect
-    for: system_design_complete(Feature)
-  - role: reviewer
-    depends_on: implementer
-    for: feature_implemented(Feature)
 
 norms:
   # Implementer must not modify files outside assigned scope
@@ -89,7 +105,7 @@ norms:
     type: forbidden
     objective: write_file(Path)
     deadline: false
-    condition: not(in_scope(Path, AssignedScope))
+    condition: not(in_scope(Path, S))
 
   # Implementer must have tests passing before requesting review
   - role: implementer
@@ -105,52 +121,21 @@ norms:
     deadline: false
     condition: is_source_file(Path)
 
-  # Reviewer must document review before approving
-  - role: reviewer
-    type: obliged
-    objective: review_documented(Feature)
-    deadline: review_approved(Feature)
-    condition: code_reviewed(Feature)
-
 rules:
   - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
-  - "feature_implemented(F) :- achieved(feature_implemented(F))."
-  - "code_reviewed(F) :- achieved(code_reviewed(F))."
   - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
   - "is_source_file(Path) :- atom_concat(_, '.ts', Path)."
-  - "is_source_file(Path) :- atom_concat(_, '.js', Path)."
-  - "is_source_file(Path) :- atom_concat(_, '.jsx', Path)."
-  - "is_source_file(Path) :- atom_concat(_, '.tsx', Path)."
+  - "feature_implemented(F) :- achieved(feature_implemented(F))."
 ```
 
-### 3. Register your agent
-
-Before starting Claude Code, register the agent with a role and scope:
+### 3. Register agents and configure hooks
 
 ```bash
 # Register as implementer scoped to a specific directory
 uv run python -m integration.hooks register \
     --org-spec org-specs/feature_workflow.yaml \
-    --agent claude-dev \
-    --role implementer \
-    --scope src/auth/
-
-# Or as architect (unrestricted writes)
-uv run python -m integration.hooks register \
-    --org-spec org-specs/feature_workflow.yaml \
-    --agent claude-dev \
-    --role architect
-
-# Or as reviewer (can read anything, cannot write source files)
-uv run python -m integration.hooks register \
-    --org-spec org-specs/feature_workflow.yaml \
-    --agent claude-dev \
-    --role reviewer
+    --agent claude-dev --role implementer --scope src/auth/
 ```
-
-State is persisted in `.aorta/state.json` — it survives across hook invocations and Claude Code sessions.
-
-### 4. Configure Claude Code hooks
 
 Add to your project's `.claude/settings.local.json`:
 
@@ -163,8 +148,7 @@ Add to your project's `.claude/settings.local.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/feature_workflow.yaml --agent claude-dev",
-            "statusMessage": "Checking governance constraints..."
+            "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/feature_workflow.yaml --agent claude-dev"
           }
         ]
       }
@@ -173,47 +157,37 @@ Add to your project's `.claude/settings.local.json`:
 }
 ```
 
-Now every `Write`, `Edit`, and `NotebookEdit` tool call goes through the governance check before execution.
+Every `Write`, `Edit`, and `NotebookEdit` call now goes through the governance check.
+
+### 4. Multi-agent orchestrator (alternative)
+
+Instead of manual registration, run a full architect → implementer → reviewer workflow automatically:
+
+```bash
+uv run python -m orchestrator.run \
+    --org-spec org-specs/three_role_workflow.yaml \
+    --task "Add a health check endpoint" \
+    --scope src/health/ \
+    --cwd /path/to/target/project
+```
+
+The orchestrator spawns each agent as a Claude Code subprocess, configures hooks automatically, enforces governance at every tool call, and logs all events for the dashboard. Each agent gets a role-appropriate system prompt with its active obligations and permissions.
 
 ### 5. Start the dashboard (optional)
 
-In a separate terminal:
-
 ```bash
-uv run python -m dashboard.server \
-    --org-spec org-specs/feature_workflow.yaml \
-    --port 5111
+uv run python -m dashboard.server --org-spec org-specs/feature_workflow.yaml --port 5111
 ```
 
-Open **http://localhost:5111** to see:
-- Registered agents with their roles and scopes
-- Live feed of permission checks (approved/blocked)
-- Active obligations and their status
-- Organizational norms from your spec
+Open **http://localhost:5111** — registered agents, live permission checks, active obligations, violation tracking.
 
-### 6. Use it
-
-Start Claude Code normally. When the agent tries to write a file:
-
-- **In scope** → approved silently, logged to dashboard
-- **Out of scope** → blocked with reason, visible in dashboard as red event
-
-To change roles mid-session (e.g., switch from implementer to architect):
-
-```bash
-uv run python -m integration.hooks register \
-    --org-spec org-specs/feature_workflow.yaml \
-    --agent claude-dev \
-    --role architect
-```
-
-## Designing your own org spec
+## Designing org specs
 
 The org spec YAML follows the AORTA metamodel:
 
 ### Roles
 
-Each role has **objectives** (what the role aims to achieve) and **capabilities** (what actions the role can perform):
+Each role has **objectives** (what it aims to achieve) and **capabilities** (what actions it can perform):
 
 ```yaml
 roles:
@@ -223,22 +197,20 @@ roles:
     capabilities:
       - read_file
       - write_file
-      - execute_command
-      - spawn_agent
 ```
 
 ### Norms
 
-Norms are the enforcement rules. Two types:
+Two types:
 
 **Prohibitions** — block an action when a condition holds:
 
 ```yaml
 - role: implementer
   type: forbidden
-  objective: write_file(Path)        # What's being blocked
-  deadline: false                     # Never expires
-  condition: not(in_scope(Path, S))  # When it applies
+  objective: write_file(Path)
+  deadline: false
+  condition: not(in_scope(Path, S))
 ```
 
 **Obligations** — require something to be achieved by a deadline:
@@ -246,95 +218,78 @@ Norms are the enforcement rules. Two types:
 ```yaml
 - role: implementer
   type: obliged
-  objective: tests_passing(Feature)           # What must be achieved
-  deadline: review_requested(Feature)         # By when
-  condition: feature_implemented(Feature)     # When obligation activates
+  objective: tests_passing(Feature)
+  deadline: review_requested(Feature)
+  condition: feature_implemented(Feature)
 ```
 
 ### Rules
 
-Prolog rules that define how conditions are evaluated. Variables are shared between the norm's objective and condition through Prolog unification:
+Rules define how conditions are evaluated. Variables are shared between the norm's objective and condition — when a concrete action unifies with the objective pattern, variables bind throughout:
 
 ```yaml
 rules:
-  # Path prefix matching for scope enforcement
   - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
-
-  # File extension matching
   - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
-
-  # Link achieved objectives to conditions
   - "feature_implemented(F) :- achieved(feature_implemented(F))."
 ```
 
-## Example: multi-agent feature workflow
+## How it works
 
-Here's how a full feature development workflow looks with governance:
-
-```
-1. Register architect (unrestricted)
-   → Designs feature, writes to docs/ and any source files
-   → Achieves: system_design_complete(auth)
-
-2. Register implementer (scope: src/auth/)
-   → Writes src/auth/*.py — approved
-   → Tries src/api/routes.py — BLOCKED (out of scope)
-   → Achieves: feature_implemented(auth)
-   → Obligation activates: must achieve tests_passing(auth) before review
-   → Achieves: tests_passing(auth) — obligation fulfilled
-
-3. Register reviewer (read-only for source)
-   → Reads any file — approved
-   → Tries to edit src/auth/login.py — BLOCKED (source file prohibition)
-   → Writes docs/review.md — approved (non-source file)
-   → Achieves: code_reviewed(auth)
-   → Obligation: must achieve review_documented(auth)
-```
-
-Run the built-in demo to see this in action:
-
-```bash
-uv run python examples/three_role_demo/demo.py
-```
+1. **YAML org spec** is compiled to structured facts and rules
+2. The **governance engine** (pure Python by default, or SWI-Prolog) evaluates norms deterministically — no LLM involved in enforcement
+3. **Claude Code hooks** intercept tool calls, translate them to governance actions, and check permissions before execution
+4. **Prohibitions with variables** (like `write_file(Path)`) are evaluated at check time — the concrete file path binds the variable, propagating through the condition
+5. **Event log** (`.aorta/events.jsonl`) records all checks for the dashboard and auditing
 
 ## Project structure
 
 ```
 governance/
-  prolog/            Prolog rules (metamodel, NC phase, OG phase)
-  compiler.py        YAML org specs → Prolog facts
-  engine.py          pyswip wrapper, permission checking
-  service.py         High-level API
-  tests/             pytest test suite (61 tests)
+  terms.py           Term representation, parser, unification
+  evaluator.py       Condition evaluator, fact database
+  py_engine.py       Pure-Python governance engine (default)
+  engine.py          SWI-Prolog engine (optional, via pyswip)
+  engine_types.py    Shared data types
+  compiler.py        YAML org specs -> facts/rules
+  service.py         High-level API with engine selection
+  prolog/            Prolog source files (NC phase, OG phase)
+  tests/             pytest test suite (156 tests)
 integration/
   hooks.py           Claude Code hook handlers + CLI
   events.py          JSONL event logger
 dashboard/
   server.py          Flask web dashboard
   static/index.html  Dashboard UI
+orchestrator/
+  run.py             Multi-agent workflow (architect → implementer → reviewer)
+  agent.py           Claude Code CLI subprocess runner
+  prompts.py         Role-appropriate system prompt builder
 org-specs/           Example organizational specifications
 examples/            Runnable demos
 ```
 
-## Resetting state
+## Architecture and theory
 
-```bash
-# Clear all agent registrations and events
-rm -rf .aorta/
+aorta4llm applies the [AORTA organizational reasoning framework](https://orbit.dtu.dk/en/publications/the-aorta-reasoning-framework) (Jensen, 2015) to LLM agent systems. The hybrid architecture uses LLMs for natural language understanding and planning, while a logic engine handles deterministic constraint enforcement.
 
-# Re-register agents as needed
-uv run python -m integration.hooks register ...
-```
+The governance cycle has three phases:
 
-## How it works
+- **NC (Norm Check)**: Activates obligations when conditions are met, fulfills them when objectives are achieved, violates them when deadlines pass. Activates and expires prohibitions.
+- **OG (Option Generation)**: Generates options from active norms, violations, and dependency relations — used for system prompt injection.
+- **AE (Action Execution)**: Delegated to the LLM agent, which selects actions informed by organizational context.
 
-1. **YAML org spec** is compiled to Prolog facts (`role/2`, `cap/2`, `cond/5`, etc.)
-2. **SWI-Prolog** (via pyswip) evaluates norms deterministically — no LLM involved in enforcement
-3. **Claude Code hooks** intercept tool calls, translate them to governance actions, and check permissions
-4. **Prohibitions with variables** (like `write_file(Path)`) are evaluated at check time — the concrete file path unifies with `Path`, binding it in the condition
-5. **Event log** (`.aorta/events.jsonl`) records all checks for the dashboard and auditing
+**Permissions are derived, not stored.** An action is permitted unless an active prohibition blocks it. This follows Section 4.1 of Jensen's dissertation.
+
+**Variable sharing** between norm objectives and conditions is the core mechanism. When the engine checks `write_file('src/auth/login.py')` against a prohibition on `write_file(Path)`, unification binds `Path` to `'src/auth/login.py'`, which propagates through the condition `not(in_scope(Path, Scope))`. The Python engine implements this with structural unification; the Prolog engine uses native Prolog unification.
+
+Two engine backends are available:
+
+- **Python engine** (default): Pure Python, no external dependencies. Implements term representation, unification, and condition evaluation. Sufficient for all governance use cases.
+- **Prolog engine** (optional): SWI-Prolog via pyswip. Required for advanced use cases like formal model checking. Install with `pip install -e ".[prolog]"` and `brew install swi-prolog`.
+
+See [DESIGN.md](DESIGN.md) for the full architecture, metamodel definition, and API spec.
 
 ## Reference
 
 - Jensen, A. S. (2015). *The AORTA Reasoning Framework — Adding Organizational Reasoning to Agents.* PhD thesis, DTU. PHD-2015-372.
-- See [DESIGN.md](DESIGN.md) for the full architecture, metamodel definition, and API spec.

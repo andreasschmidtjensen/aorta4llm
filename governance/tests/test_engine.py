@@ -3,7 +3,7 @@
 import pytest
 
 from governance.compiler import compile_org_spec
-from governance.engine import GovernanceEngine, NormChange, NotifyResult, PermissionResult
+from governance.engine_types import NormChange, NotifyResult, PermissionResult
 
 _ORG_SPEC_PATH = None
 
@@ -16,10 +16,19 @@ def _get_org_spec_path():
     return _ORG_SPEC_PATH
 
 
+def _create_engine(backend: str):
+    if backend == "prolog":
+        from governance.engine import GovernanceEngine
+        return GovernanceEngine()
+    else:
+        from governance.py_engine import PythonGovernanceEngine
+        return PythonGovernanceEngine()
+
+
 @pytest.fixture
-def engine():
+def engine(engine_backend):
     """Create a fresh engine loaded with the code_review org spec."""
-    eng = GovernanceEngine()
+    eng = _create_engine(engine_backend)
     spec = compile_org_spec(_get_org_spec_path())
     eng.load_org_spec(spec)
     eng.enact_role("impl-agent-1", "implementer")
@@ -120,17 +129,16 @@ class TestPermissionEdgeCases:
 class TestEngineSetup:
     """Test engine initialization and loading."""
 
-    def test_engine_creates_without_error(self):
-        eng = GovernanceEngine()
+    def test_engine_creates_without_error(self, engine_backend):
+        eng = _create_engine(engine_backend)
         assert eng is not None
 
-    def test_enact_role(self):
-        eng = GovernanceEngine()
+    def test_enact_role(self, engine_backend):
+        eng = _create_engine(engine_backend)
         spec = compile_org_spec(_get_org_spec_path())
         eng.load_org_spec(spec)
         eng.enact_role("test-agent", "implementer")
-        results = list(eng._prolog.query("rea('test-agent', implementer)"))
-        assert len(results) > 0
+        assert eng.get_agent_role("test-agent") == "implementer"
 
 
 class TestObligationLifecycle:
@@ -188,8 +196,8 @@ class TestObligationLifecycle:
         assert len(violated) == 1
         assert "tests_passing" in violated[0].objective
 
-    def test_violation_recorded_in_prolog(self, engine):
-        """After violation, viol/4 fact exists in Prolog."""
+    def test_violation_recorded(self, engine):
+        """After violation, violation is queryable via get_obligations."""
         engine.notify_action(
             "impl-agent-1", "implementer",
             achieved=["feature_implemented(auth)"],
@@ -198,10 +206,9 @@ class TestObligationLifecycle:
             "impl-agent-1", "implementer",
             deadlines_reached=["review_requested(auth)"],
         )
-        viols = list(engine._prolog.query(
-            "viol('impl-agent-1', implementer, obliged, Obj)"
-        ))
-        assert len(viols) > 0
+        result = engine.get_obligations("impl-agent-1", "implementer")
+        viol_opts = [o for o in result["options"] if o["type"] == "violation"]
+        assert len(viol_opts) > 0
 
 
 class TestGetObligations:

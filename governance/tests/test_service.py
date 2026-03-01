@@ -16,9 +16,9 @@ def _get_org_spec_path():
 
 
 @pytest.fixture
-def service():
+def service(engine_backend):
     """Create a fresh service loaded with the code_review org spec."""
-    svc = GovernanceService(_get_org_spec_path())
+    svc = GovernanceService(_get_org_spec_path(), engine=engine_backend)
     svc.register_agent("impl-agent-1", "implementer", scope="src/api/")
     return svc
 
@@ -67,8 +67,8 @@ class TestServicePermissions:
 
 
 class TestServiceRegistration:
-    def test_register_multiple_agents(self):
-        svc = GovernanceService(_get_org_spec_path())
+    def test_register_multiple_agents(self, engine_backend):
+        svc = GovernanceService(_get_org_spec_path(), engine=engine_backend)
         svc.register_agent("agent-a", "implementer", scope="src/api/")
         svc.register_agent("agent-b", "implementer", scope="src/auth/")
 
@@ -83,8 +83,8 @@ class TestServiceRegistration:
         )
         assert result_a2.permitted is False
 
-    def test_read_always_permitted(self):
-        svc = GovernanceService(_get_org_spec_path())
+    def test_read_always_permitted(self, engine_backend):
+        svc = GovernanceService(_get_org_spec_path(), engine=engine_backend)
         svc.register_agent("agent-a", "implementer", scope="src/api/")
         result = svc.check_permission(
             "agent-a", "implementer", "read_file", {"path": "src/auth/login.py"}

@@ -58,13 +58,13 @@ class GovernanceHook:
     """
 
     def __init__(self, org_spec_path: str | Path, state_path: str | Path = ".aorta/state.json",
-                 events_path: str | Path | None = None):
+                 events_path: str | Path | None = None, engine: str = "auto"):
         self._org_spec_path = Path(org_spec_path)
         self._state_path = Path(state_path)
         self._events_path = Path(events_path) if events_path else (
             self._state_path.parent / "events.jsonl"
         )
-        self._service = GovernanceService(self._org_spec_path)
+        self._service = GovernanceService(self._org_spec_path, engine=engine)
         self._events: list[dict] = []
         self._replaying = False
         self._replay_state()
@@ -215,12 +215,7 @@ class GovernanceHook:
 
     def _get_agent_role(self, agent: str) -> str | None:
         """Look up the role for a registered agent."""
-        results = list(self._service._engine._prolog.query(
-            f"rea('{agent}', Role), term_to_atom(Role, RoleS)"
-        ))
-        if results:
-            return str(results[0]["RoleS"])
-        return None
+        return self._service.get_agent_role(agent)
 
 
 def main():

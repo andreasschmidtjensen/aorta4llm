@@ -17,16 +17,16 @@ _SPEC_PATH = Path(__file__).parent.parent.parent / "org-specs" / "three_role_wor
 
 
 @pytest.fixture
-def service():
+def service(engine_backend):
     """Fresh service loaded with three_role_workflow spec."""
-    return GovernanceService(_SPEC_PATH)
+    return GovernanceService(_SPEC_PATH, engine=engine_backend)
 
 
 @pytest.fixture
-def hook(tmp_path):
+def hook(tmp_path, engine_backend):
     """Fresh hook with temporary state file."""
     state_file = tmp_path / "state.json"
-    return GovernanceHook(_SPEC_PATH, state_path=state_file)
+    return GovernanceHook(_SPEC_PATH, state_path=state_file, engine=engine_backend)
 
 
 class TestThreeRoleWorkflow:
@@ -215,16 +215,16 @@ class TestHookIntegration:
         )
         assert result["decision"] == "approve"
 
-    def test_state_persistence(self, tmp_path):
+    def test_state_persistence(self, tmp_path, engine_backend):
         """State survives across hook instances."""
         state_file = tmp_path / "state.json"
 
         # First instance: register agent
-        hook1 = GovernanceHook(_SPEC_PATH, state_path=state_file)
+        hook1 = GovernanceHook(_SPEC_PATH, state_path=state_file, engine=engine_backend)
         hook1.register_agent("impl-1", "implementer", scope="src/auth/")
 
         # Second instance: replays state, agent is known
-        hook2 = GovernanceHook(_SPEC_PATH, state_path=state_file)
+        hook2 = GovernanceHook(_SPEC_PATH, state_path=state_file, engine=engine_backend)
         result = hook2.pre_tool_use(
             {"tool_name": "Write", "tool_input": {"file_path": "src/api/x.py"}},
             agent="impl-1",

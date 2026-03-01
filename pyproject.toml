@@ -8,13 +8,16 @@ version = "0.1.0"
 description = "Organizational reasoning for LLM agent systems"
 requires-python = ">=3.10"
 dependencies = [
-    "pyswip>=0.3.1",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
+prolog = [
+    "pyswip>=0.3.1",
+]
 dev = [
     "pytest>=7.0",
+    "pyswip>=0.3.1",
 ]
 dashboard = [
     "flask>=3.0",

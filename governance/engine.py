@@ -1,40 +1,14 @@
 """Governance engine wrapping SWI-Prolog via pyswip."""
 
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from pyswip import Prolog
 
 from governance.compiler import CompiledSpec
+from governance.engine_types import NormChange, NotifyResult, PermissionResult
 
 # Path to the Prolog source files
 _PROLOG_DIR = Path(__file__).parent / "prolog"
-
-
-@dataclass
-class PermissionResult:
-    """Result of a permission check."""
-
-    permitted: bool
-    reason: str
-    violation: str | None = None
-
-
-@dataclass
-class NormChange:
-    """A single norm state change detected by notify_action."""
-
-    type: str  # "activated", "fulfilled", "violated"
-    deontic: str
-    objective: str
-    deadline: str
-
-
-@dataclass
-class NotifyResult:
-    """Result of a notify_action call."""
-
-    norms_changed: list[NormChange] = field(default_factory=list)
 
 
 class GovernanceEngine:
@@ -234,6 +208,15 @@ class GovernanceEngine:
             f"term_to_atom(Obj, ObjS)"
         ))
         return {(str(r["DeonS"]), str(r["ObjS"])) for r in results}
+
+    def get_agent_role(self, agent: str) -> str | None:
+        """Look up the role for a registered agent."""
+        results = list(self._prolog.query(
+            f"rea('{agent}', Role), term_to_atom(Role, RoleS)"
+        ))
+        if results:
+            return str(results[0]["RoleS"])
+        return None
 
     def _query_options(self, agent: str) -> list[dict]:
         """Query OG options, returning each type with structured fields."""

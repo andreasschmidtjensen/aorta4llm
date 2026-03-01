@@ -1,0 +1,72 @@
+organization: arch_gate_workflow
+
+roles:
+  architect:
+    objectives:
+      - architecture_reviewed(Feature)
+    capabilities:
+      - read_file
+      - write_file
+
+  implementer:
+    objectives:
+      - feature_implemented(Feature)
+      - tests_passing(Feature)
+    capabilities:
+      - read_file
+      - write_file
+      - execute_command
+
+  reviewer:
+    objectives:
+      - code_reviewed(Feature)
+      - review_documented(Feature)
+    capabilities:
+      - read_file
+
+dependencies:
+  - role: implementer
+    depends_on: architect
+    for: architecture_reviewed(Feature)
+  - role: reviewer
+    depends_on: implementer
+    for: feature_implemented(Feature)
+
+norms:
+  # GATE: Implementer cannot write source files until architecture is reviewed
+  # for their scope. This is the key norm that a JSON allowlist cannot express:
+  # the condition depends on runtime state (has architecture_reviewed been achieved?).
+  - role: implementer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: not(architecture_reviewed_for_scope(Path))
+
+  # Implementer scope restriction (standard)
+  - role: implementer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: not(in_scope(Path, AssignedScope))
+
+  # Reviewer MUST complete review by deadline
+  - role: reviewer
+    type: obliged
+    objective: code_reviewed(Feature)
+    deadline: review_deadline(Feature)
+    condition: review_requested(Feature)
+
+  # Reviewer cannot modify source files
+  - role: reviewer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: is_source_file(Path)
+
+rules:
+  - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
+  - "architecture_reviewed_for_scope(Path) :- current_scope(Scope), atom_concat(Scope, _, Path), achieved(architecture_reviewed(Scope))."
+  - "review_requested(F) :- achieved(review_requested(F))."
+  - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
+  - "is_source_file(Path) :- atom_concat(_, '.ts', Path)."
+  - "is_source_file(Path) :- atom_concat(_, '.js', Path)."
