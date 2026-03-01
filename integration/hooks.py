@@ -35,6 +35,7 @@ import sys
 from pathlib import Path
 
 from governance.service import GovernanceService
+from integration.events import log_event
 
 # Mapping from Claude Code tool names to governance action names
 TOOL_ACTION_MAP = {
@@ -56,17 +57,23 @@ class GovernanceHook:
     so that state survives across individual hook invocations.
     """
 
-    def __init__(self, org_spec_path: str | Path, state_path: str | Path = ".aorta/state.json"):
+    def __init__(self, org_spec_path: str | Path, state_path: str | Path = ".aorta/state.json",
+                 events_path: str | Path | None = None):
         self._org_spec_path = Path(org_spec_path)
         self._state_path = Path(state_path)
+        self._events_path = Path(events_path) if events_path else (
+            self._state_path.parent / "events.jsonl"
+        )
         self._service = GovernanceService(self._org_spec_path)
         self._events: list[dict] = []
+        self._replaying = False
         self._replay_state()
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state."""
         if not self._state_path.exists():
             return
+        self._replaying = True
         state = json.loads(self._state_path.read_text())
         self._events = state.get("events", [])
         for event in self._events:
@@ -85,6 +92,7 @@ class GovernanceHook:
                     event["agent"], event["role"],
                     deadlines_reached=event["deadlines"],
                 )
+        self._replaying = False
 
     def _save_state(self):
         """Persist events to state file."""
@@ -98,6 +106,11 @@ class GovernanceHook:
             "type": "register", "agent": agent, "role": role, "scope": scope,
         })
         self._save_state()
+        if not self._replaying:
+            log_event(
+                {"type": "register", "agent": agent, "role": role, "scope": scope},
+                self._events_path,
+            )
 
     def pre_tool_use(self, context: dict, agent: str | None = None) -> dict:
         """Handle PreToolUse hook.
@@ -123,12 +136,25 @@ class GovernanceHook:
             return {"decision": "approve"}
 
         params = {}
-        if "file_path" in tool_input:
-            params["path"] = tool_input["file_path"]
-        elif "path" in tool_input:
-            params["path"] = tool_input["path"]
+        raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+        if raw_path:
+            # Claude Code sends absolute paths; make relative to project root
+            cwd = context.get("cwd", "")
+            if cwd and raw_path.startswith(cwd):
+                raw_path = raw_path[len(cwd):].lstrip("/")
+            params["path"] = raw_path
 
         result = self._service.check_permission(agent_id, role, action, params)
+
+        decision = "approve" if result.permitted else "block"
+        event = {
+            "type": "check", "agent": agent_id, "role": role,
+            "action": action, "path": params.get("path", ""),
+            "decision": decision,
+        }
+        if not result.permitted:
+            event["reason"] = result.reason
+        log_event(event, self._events_path)
 
         if result.permitted:
             return {"decision": "approve"}
@@ -212,9 +238,10 @@ def main():
     parser.add_argument("--agent", help="Agent ID")
     parser.add_argument("--role", help="Role (for register)")
     parser.add_argument("--scope", default="", help="Scope (for register)")
+    parser.add_argument("--events-path", default=None, help="Events JSONL path")
 
     args = parser.parse_args()
-    hook = GovernanceHook(args.org_spec, args.state)
+    hook = GovernanceHook(args.org_spec, args.state, events_path=args.events_path)
 
     if args.command == "register":
         if not args.agent or not args.role:
@@ -225,7 +252,7 @@ def main():
     elif args.command == "pre-tool-use":
         context = json.loads(sys.stdin.read())
         result = hook.pre_tool_use(context, agent=args.agent)
-        _respond(result)
+        _respond_hook(result)
 
     elif args.command == "post-tool-use":
         context = json.loads(sys.stdin.read())
@@ -242,6 +269,24 @@ def main():
 
 def _respond(obj: dict):
     print(json.dumps(obj), flush=True)
+
+
+def _respond_hook(result: dict):
+    """Respond in Claude Code hook format.
+
+    Claude Code expects:
+    - Approve: exit 0 (empty stdout is fine)
+    - Block: exit 0 with hookSpecificOutput containing permissionDecision=deny
+    """
+    if result.get("decision") == "block":
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": result.get("reason", "blocked by governance"),
+            }
+        }), flush=True)
+    # For approve: exit 0 with no output
 
 
 if __name__ == "__main__":

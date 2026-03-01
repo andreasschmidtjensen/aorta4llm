@@ -16,9 +16,15 @@ dependencies = [
 dev = [
     "pytest>=7.0",
 ]
+dashboard = [
+    "flask>=3.0",
+]
+orchestrator = [
+    # Requires Claude Code CLI: npm install -g @anthropic-ai/claude-code
+]
 
 [tool.hatch.build.targets.wheel]
-packages = ["governance", "integration"]
+packages = ["governance", "integration", "dashboard", "orchestrator"]
 
 [tool.pytest.ini_options]
 testpaths = ["governance/tests"]
