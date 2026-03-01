@@ -21,10 +21,7 @@ uv run python -m dashboard.server \
     --events examples/health_check_project/.aorta/events.jsonl \
     --port 5111 &
 
-# 2. Initialize git in the example project (required by Claude Code)
-cd examples/health_check_project && git init && git add -A && git commit -m "Initial scaffold" && cd ../..
-
-# 3. Run the orchestrator
+# 2. Run the orchestrator
 uv run python -m orchestrator.run \
     --org-spec org-specs/three_role_workflow.yaml \
     --task "Add a health check endpoint that returns system status" \
