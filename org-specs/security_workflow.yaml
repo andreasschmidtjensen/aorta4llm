@@ -1,0 +1,132 @@
+organization: security_workflow
+
+roles:
+  security_lead:
+    objectives:
+      - security_plan_approved(Feature)
+      - security_reviewed(Feature)
+    capabilities:
+      - read_file
+      - write_file   # documentation only — source files blocked by norm
+
+  developer:
+    objectives:
+      - feature_implemented(Feature)
+      - tests_passing(Feature)
+    capabilities:
+      - read_file
+      - write_file
+      - execute_command
+
+  tester:
+    objectives:
+      - tests_executed(Feature)
+      - test_report_written(Feature)
+    capabilities:
+      - read_file
+      - write_file   # reports only — source files blocked by norm
+      - execute_command
+
+  deployer:
+    objectives:
+      - deployed(Target)
+    capabilities:
+      - read_file
+      - deploy
+
+dependencies:
+  - role: developer
+    depends_on: security_lead
+    for: security_plan_approved(Feature)
+  - role: tester
+    depends_on: developer
+    for: feature_implemented(Feature)
+  - role: deployer
+    depends_on: tester
+    for: tests_passing(Feature)
+  - role: deployer
+    depends_on: security_lead
+    for: security_reviewed(Feature)
+
+norms:
+  # 1. Scope restriction — developer can only write within assigned scope
+  - role: developer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: not(in_scope(Path, AssignedScope))
+
+  # 2. Secrets protection — developer cannot write to sensitive files
+  #    (.env, anything with secret/credential in path, production config)
+  - role: developer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: is_sensitive_file(Path)
+
+  # 3. Security gate — developer cannot write source files until
+  #    security lead has approved the security plan for their scope.
+  #    This is the key conditional gate: same file is blocked or
+  #    permitted depending on organizational state.
+  - role: developer
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: not(security_plan_approved_for_scope(Path))
+
+  # 4. Source lock (tester) — tester cannot modify source code files.
+  #    They can only write test reports and documentation.
+  - role: tester
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: is_source_file(Path)
+
+  # 5. Source lock (security_lead) — security lead reviews but does
+  #    not write code. Can write reports and security documentation.
+  - role: security_lead
+    type: forbidden
+    objective: write_file(Path)
+    deadline: false
+    condition: is_source_file(Path)
+
+  # 6. Deploy gate — deployer cannot deploy until BOTH tests pass
+  #    AND security review is complete. Multi-condition gate.
+  - role: deployer
+    type: forbidden
+    objective: deploy(Target)
+    deadline: false
+    condition: not(deployment_approved(Target))
+
+  # 7. Review deadline — security lead must complete review by deadline.
+  #    Violation is formally recorded if missed.
+  - role: security_lead
+    type: obliged
+    objective: security_reviewed(Feature)
+    deadline: review_deadline(Feature)
+    condition: review_requested(Feature)
+
+rules:
+  # Scope check: path must start with the agent's assigned scope
+  - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
+
+  # Source file detection: .py, .ts, .js extensions
+  - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
+  - "is_source_file(Path) :- atom_concat(_, '.ts', Path)."
+  - "is_source_file(Path) :- atom_concat(_, '.js', Path)."
+
+  # Sensitive file detection: .env files, paths containing secret/credential/prod config
+  - "is_sensitive_file(Path) :- atom_concat(_, '.env', Path)."
+  - "is_sensitive_file(Path) :- atom_concat('config/prod/', _, Path)."
+  - "is_sensitive_file(Path) :- path_contains(Path, secret)."
+  - "is_sensitive_file(Path) :- path_contains(Path, credential)."
+  - "path_contains(Path, Fragment) :- atom_concat(_, Rest, Path), atom_concat(Fragment, _, Rest)."
+
+  # Security gate: checks if security_plan_approved has been achieved for the agent's scope
+  - "security_plan_approved_for_scope(Path) :- current_scope(Scope), atom_concat(Scope, _, Path), achieved(security_plan_approved(Scope))."
+
+  # Deploy gate: requires BOTH tests_passing AND security_reviewed
+  - "deployment_approved(Target) :- achieved(tests_passing(Target)), achieved(security_reviewed(Target))."
+
+  # Condition triggers for obligations
+  - "review_requested(F) :- achieved(review_requested(F))."
