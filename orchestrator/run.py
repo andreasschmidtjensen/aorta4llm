@@ -40,6 +40,7 @@ async def run_workflow(
     model: str = "sonnet",
     cwd: str | None = None,
     max_turns: int = 10,
+    events_path: Path | str | None = None,
 ) -> dict:
     """Run the full organizational workflow for a task.
 
@@ -50,6 +51,7 @@ async def run_workflow(
         model: Model to use for agents.
         cwd: Working directory (target project).
         max_turns: Maximum turns per agent.
+        events_path: Explicit events file path. If None, uses cwd/.aorta/events.jsonl.
 
     Returns:
         Dict with phase outputs and summary.
@@ -57,10 +59,13 @@ async def run_workflow(
     with open(org_spec_path) as f:
         spec = yaml.safe_load(f)
 
-    # Paths for governance state and events — stored in target project
+    # Paths for governance state and events
     project_dir = Path(cwd or ".")
-    state_path = project_dir / ".aorta" / "state.json"
-    events_path = project_dir / ".aorta" / "events.jsonl"
+    if events_path:
+        events_path = Path(events_path)
+    else:
+        events_path = project_dir / ".aorta" / "events.jsonl"
+    state_path = events_path.parent / "state.json"
 
     # GovernanceHook persists state to disk so the CLI hooks (which run
     # as separate processes) can read it back.
@@ -78,6 +83,9 @@ async def run_workflow(
     print(f"  Scope:   {scope}")
     print(f"  Model:   {model}")
     print(f"{'='*60}\n")
+
+    log_event({"type": "workflow_start", "task": task,
+               "scope": scope, "feature": feature}, events_path)
 
     # ── Phase 1: Architect ─────────────────────────────────────
 
@@ -218,6 +226,9 @@ async def run_workflow(
     print(f"  Feature:    {feature}")
     print(f"  Dashboard:  http://localhost:5111")
     print(f"{'='*60}\n")
+
+    log_event({"type": "workflow_complete", "status": "success",
+               "feature": feature}, events_path)
 
     return results
 

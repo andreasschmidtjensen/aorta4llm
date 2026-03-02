@@ -31,6 +31,7 @@ Claude Code hook configuration (.claude/settings.local.json):
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -112,13 +113,15 @@ class GovernanceHook:
                 self._events_path,
             )
 
-    def pre_tool_use(self, context: dict, agent: str | None = None) -> dict:
+    def pre_tool_use(self, context: dict, agent: str | None = None,
+                     project_cwd: str | None = None) -> dict:
         """Handle PreToolUse hook.
 
         Args:
             context: Tool call context from Claude Code
                      {"tool_name": "Write", "tool_input": {"file_path": "..."}}
             agent: Agent ID (override context if provided)
+            project_cwd: Explicit project root for path normalization.
 
         Returns:
             {"decision": "approve"} or {"decision": "block", "reason": "..."}
@@ -137,11 +140,17 @@ class GovernanceHook:
 
         params = {}
         raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+        if raw_path and os.path.isabs(raw_path):
+            # Claude Code sends absolute paths; make relative to project root.
+            # Try explicit cwd, then context cwd, then process cwd.
+            for candidate in [project_cwd, context.get("cwd", ""), os.getcwd()]:
+                if not candidate:
+                    continue
+                prefix = candidate.rstrip("/") + "/"
+                if raw_path.startswith(prefix):
+                    raw_path = raw_path[len(prefix):]
+                    break
         if raw_path:
-            # Claude Code sends absolute paths; make relative to project root
-            cwd = context.get("cwd", "")
-            if cwd and raw_path.startswith(cwd):
-                raw_path = raw_path[len(cwd):].lstrip("/")
             params["path"] = raw_path
 
         result = self._service.check_permission(agent_id, role, action, params)
@@ -234,6 +243,7 @@ def main():
     parser.add_argument("--role", help="Role (for register)")
     parser.add_argument("--scope", default="", help="Scope (for register)")
     parser.add_argument("--events-path", default=None, help="Events JSONL path")
+    parser.add_argument("--cwd", default=None, help="Project root for path normalization")
 
     args = parser.parse_args()
     hook = GovernanceHook(args.org_spec, args.state, events_path=args.events_path)
@@ -246,7 +256,7 @@ def main():
 
     elif args.command == "pre-tool-use":
         context = json.loads(sys.stdin.read())
-        result = hook.pre_tool_use(context, agent=args.agent)
+        result = hook.pre_tool_use(context, agent=args.agent, project_cwd=args.cwd)
         _respond_hook(result)
 
     elif args.command == "post-tool-use":
