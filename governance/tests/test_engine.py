@@ -4,6 +4,7 @@ import pytest
 
 from governance.compiler import compile_org_spec
 from governance.engine_types import NormChange, NotifyResult, PermissionResult
+from governance.py_engine import PythonGovernanceEngine
 
 _ORG_SPEC_PATH = None
 
@@ -16,19 +17,10 @@ def _get_org_spec_path():
     return _ORG_SPEC_PATH
 
 
-def _create_engine(backend: str):
-    if backend == "prolog":
-        from governance.engine import GovernanceEngine
-        return GovernanceEngine()
-    else:
-        from governance.py_engine import PythonGovernanceEngine
-        return PythonGovernanceEngine()
-
-
 @pytest.fixture
-def engine(engine_backend):
+def engine():
     """Create a fresh engine loaded with the code_review org spec."""
-    eng = _create_engine(engine_backend)
+    eng = PythonGovernanceEngine()
     spec = compile_org_spec(_get_org_spec_path())
     eng.load_org_spec(spec)
     eng.enact_role("impl-agent-1", "implementer")
@@ -129,12 +121,12 @@ class TestPermissionEdgeCases:
 class TestEngineSetup:
     """Test engine initialization and loading."""
 
-    def test_engine_creates_without_error(self, engine_backend):
-        eng = _create_engine(engine_backend)
+    def test_engine_creates_without_error(self):
+        eng = PythonGovernanceEngine()
         assert eng is not None
 
-    def test_enact_role(self, engine_backend):
-        eng = _create_engine(engine_backend)
+    def test_enact_role(self):
+        eng = PythonGovernanceEngine()
         spec = compile_org_spec(_get_org_spec_path())
         eng.load_org_spec(spec)
         eng.enact_role("test-agent", "implementer")

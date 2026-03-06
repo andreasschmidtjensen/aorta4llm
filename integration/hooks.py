@@ -43,6 +43,10 @@ import yaml
 from governance.service import GovernanceService
 from integration.events import log_event
 
+# Paths that are always protected regardless of org spec configuration.
+# Prevents agents from modifying their own governance infrastructure.
+PROTECTED_PATHS = (".aorta/", ".claude/")
+
 # Mapping from Claude Code tool names to governance action names
 TOOL_ACTION_MAP = {
     "Write": "write_file",
@@ -62,6 +66,24 @@ def _default_state_path(org_spec_path: str | Path) -> Path:
     return Path.home() / ".aorta" / f"state-{digest}.json"
 
 
+def _detect_project_root(org_spec_path: Path) -> str | None:
+    """Auto-detect the project root by walking up from the org spec.
+
+    Looks for .aorta/ or .git/ directories to identify the project root.
+    Falls back to the parent of .aorta/ if the org spec is inside it.
+    """
+    resolved = org_spec_path.resolve()
+    # If org spec is inside .aorta/, the project root is .aorta/'s parent
+    for parent in resolved.parents:
+        if parent.name == ".aorta":
+            return str(parent.parent)
+    # Walk up looking for .git or .aorta
+    for parent in resolved.parents:
+        if (parent / ".git").exists() or (parent / ".aorta").exists():
+            return str(parent)
+    return None
+
+
 class GovernanceHook:
     """Hook handler for Claude Code integration.
 
@@ -70,13 +92,13 @@ class GovernanceHook:
     """
 
     def __init__(self, org_spec_path: str | Path, state_path: str | Path | None = None,
-                 events_path: str | Path | None = None, engine: str = "auto"):
+                 events_path: str | Path | None = None):
         self._org_spec_path = Path(org_spec_path)
         self._state_path = Path(state_path) if state_path else _default_state_path(org_spec_path)
         self._events_path = Path(events_path) if events_path else (
             self._state_path.parent / "events.jsonl"
         )
-        self._service = GovernanceService(self._org_spec_path, engine=engine)
+        self._service = GovernanceService(self._org_spec_path)
         extras = self._load_spec_extras(self._org_spec_path)
         self._triggers = extras[0]
         self._bash_analysis = extras[1]
@@ -111,6 +133,7 @@ class GovernanceHook:
         self._replaying = True
         state = json.loads(self._state_path.read_text())
         self._events = state.get("events", [])
+        self._soft_block_cache = state.get("soft_blocks", {})
         for event in self._events:
             etype = event["type"]
             if etype == "register":
@@ -130,9 +153,12 @@ class GovernanceHook:
         self._replaying = False
 
     def _save_state(self):
-        """Persist events to state file."""
+        """Persist events and soft block timestamps to state file."""
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(json.dumps({"events": self._events}, indent=2))
+        self._state_path.write_text(json.dumps({
+            "events": self._events,
+            "soft_blocks": self._soft_block_cache,
+        }, indent=2))
 
     def register_agent(self, agent: str, role: str, scope: str = ""):
         """Register an agent with a role and scope, persisting the event."""
@@ -166,10 +192,16 @@ class GovernanceHook:
         if not action:
             return {"decision": "approve"}
 
-        agent_id = agent or context.get("agent_name", "default-agent")
+        agent_id = agent or os.environ.get("AORTA_AGENT") or context.get("agent_name", "default-agent")
         role = self._get_agent_role(agent_id)
         if not role:
-            return {"decision": "approve"}
+            reason = f"agent '{agent_id}' is not registered — action denied (fail-closed)"
+            self._log({
+                "type": "check", "agent": agent_id, "role": "unknown",
+                "action": action, "path": "",
+                "decision": "block", "reason": reason,
+            })
+            return {"decision": "block", "reason": reason}
 
         params = {}
         if tool_name == "Bash":
@@ -178,16 +210,29 @@ class GovernanceHook:
             raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
             if raw_path and os.path.isabs(raw_path):
                 # Claude Code sends absolute paths; make relative to project root.
-                # Try explicit cwd, then context cwd, then process cwd.
-                for candidate in [project_cwd, context.get("cwd", ""), os.getcwd()]:
+                # Try explicit cwd, context cwd, auto-detected root, then process cwd.
+                detected_root = _detect_project_root(self._org_spec_path)
+                for candidate in [project_cwd, context.get("cwd", ""), detected_root, os.getcwd()]:
                     if not candidate:
                         continue
-                    prefix = candidate.rstrip("/") + "/"
+                    prefix = str(candidate).rstrip("/") + "/"
                     if raw_path.startswith(prefix):
                         raw_path = raw_path[len(prefix):]
                         break
             if raw_path:
                 params["path"] = raw_path
+
+        # Hard-block writes to governance infrastructure, regardless of org spec.
+        if action == "write_file" and params.get("path"):
+            for protected in PROTECTED_PATHS:
+                if params["path"].startswith(protected) or params["path"] == protected.rstrip("/"):
+                    reason = f"write to '{params['path']}' denied: governance infrastructure is protected"
+                    self._log({
+                        "type": "check", "agent": agent_id, "role": role,
+                        "action": action, "path": params["path"],
+                        "decision": "block", "reason": reason, "severity": "hard",
+                    })
+                    return {"decision": "block", "reason": reason}
 
         result = self._service.check_permission(agent_id, role, action, params)
 
@@ -250,7 +295,7 @@ class GovernanceHook:
         tool_response = context.get("tool_response", {})
         exit_code = tool_response.get("exit_code", 0)
 
-        agent_id = agent or context.get("agent_name", "default-agent")
+        agent_id = agent or os.environ.get("AORTA_AGENT") or context.get("agent_name", "default-agent")
         role = self._get_agent_role(agent_id)
         if not role:
             return {"status": "ok"}
@@ -339,14 +384,21 @@ class GovernanceHook:
         prev = self._soft_block_cache.get(cache_key)
         if prev is not None and (now - prev) < self._soft_block_window:
             del self._soft_block_cache[cache_key]
+            self._save_state()
             return {"decision": "approve"}
 
         # First time — block and cache for retry.
         self._soft_block_cache[cache_key] = now
+        self._save_state()
         return {
             "decision": "block",
-            "reason": f"⚠ CONFIRMATION REQUIRED: {reason}\n"
-                      f"If the user explicitly approves, retry this action.",
+            "reason": (
+                f"SOFT BLOCK — user confirmation required.\n"
+                f"Reason: {reason}\n"
+                f"Action: Ask the user whether they want to proceed. "
+                f"If the user confirms, retry the EXACT same command. "
+                f"The retry will be approved automatically within {self._soft_block_window}s."
+            ),
         }
 
     @staticmethod

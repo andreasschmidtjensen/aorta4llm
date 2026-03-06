@@ -1,0 +1,73 @@
+"""aorta hook — Claude Code hook entry point.
+
+Thin wrapper so hooks can use `aorta hook pre-tool-use ...` instead of
+`uv run python -m integration.hooks pre-tool-use ...`. This makes hook
+commands portable across projects without needing PYTHONPATH hacks.
+"""
+
+import json
+import os
+import re
+import sys
+
+
+def add_parser(subparsers):
+    p = subparsers.add_parser("hook", help="Claude Code hook handler")
+    p.add_argument(
+        "hook_command",
+        choices=["pre-tool-use", "post-tool-use", "register", "prompt"],
+    )
+    p.add_argument("--org-spec", required=True, help="Path to org spec YAML")
+    p.add_argument("--state", default=None, help="State file path")
+    p.add_argument("--agent", help="Agent ID")
+    p.add_argument("--role", help="Role (for register)")
+    p.add_argument("--scope", default="", help="Scope (for register)")
+    p.add_argument("--events-path", default=None, help="Events JSONL path")
+    p.add_argument("--cwd", default=None, help="Project root for path normalization")
+    p.set_defaults(func=run)
+
+
+def run(args):
+    from integration.hooks import GovernanceHook
+
+    # Support AORTA_AGENT env var as fallback for --agent.
+    agent = args.agent or os.environ.get("AORTA_AGENT")
+
+    hook = GovernanceHook(args.org_spec, args.state, events_path=args.events_path)
+
+    if args.hook_command == "register":
+        if not agent or not args.role:
+            print("register requires --agent and --role", file=sys.stderr)
+            raise SystemExit(1)
+        hook.register_agent(agent, args.role, args.scope)
+        print(json.dumps({"ok": True}), flush=True)
+
+    elif args.hook_command == "pre-tool-use":
+        context = json.loads(sys.stdin.read())
+        result = hook.pre_tool_use(context, agent=agent, project_cwd=args.cwd)
+        _respond_hook(result)
+
+    elif args.hook_command == "post-tool-use":
+        context = json.loads(sys.stdin.read())
+        result = hook.post_tool_use(context, agent=agent)
+        print(json.dumps(result), flush=True)
+
+    elif args.hook_command == "prompt":
+        if not agent:
+            print("prompt requires --agent", file=sys.stderr)
+            raise SystemExit(1)
+        text = hook.get_system_prompt_injection(agent)
+        if text:
+            print(text)
+
+
+def _respond_hook(result: dict):
+    """Respond in Claude Code hook format."""
+    if result.get("decision") == "block":
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": result.get("reason", "blocked by governance"),
+            }
+        }), flush=True)

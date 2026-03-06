@@ -1,8 +1,7 @@
 """Governance dashboard — live monitoring web UI for aorta4llm.
 
 Serves a single-page dashboard that shows agents, permission checks,
-obligations, and organizational norms in real time via SSE. Can also
-launch orchestrator workflows from the UI.
+obligations, and organizational norms in real time via SSE.
 
 Usage:
     uv run python -m dashboard.server --org-spec org-specs/three_role_workflow.yaml
@@ -10,12 +9,8 @@ Usage:
 """
 
 import argparse
-import asyncio
 import json
-import threading
 import time
-import traceback
-import uuid
 from pathlib import Path
 
 import yaml
@@ -28,16 +23,6 @@ app = Flask(__name__, static_folder="static")
 _org_spec: dict = {}
 _org_spec_path: str = ""
 _events_path: Path = Path(".aorta/events.jsonl")
-_cwd: str = "."
-
-# Workflow state (one workflow at a time)
-_workflow: dict = {
-    "id": None,
-    "status": "idle",   # idle | running | complete | error
-    "phase": None,
-    "error": None,
-    "thread": None,
-}
 
 
 @app.route("/")
@@ -137,97 +122,6 @@ def api_event_stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# --- Orchestrator workflow API ---
-
-@app.route("/api/workflow/start", methods=["POST"])
-def api_workflow_start():
-    """Start an orchestrator workflow in a background thread."""
-    global _workflow
-
-    if _workflow["status"] == "running":
-        return jsonify({"error": "A workflow is already running"}), 409
-
-    data = request.get_json() or {}
-    task = data.get("task", "").strip()
-    scope = data.get("scope", "").strip()
-    model = data.get("model", "sonnet")
-    max_turns = data.get("max_turns", 10)
-    project_dir = data.get("project_dir", "").strip() or _cwd
-
-    if not task:
-        return jsonify({"error": "task is required"}), 400
-    if not scope:
-        return jsonify({"error": "scope is required"}), 400
-
-    # Clear stale events and state from previous runs
-    if _events_path.exists():
-        _events_path.unlink()
-    state_file = _events_path.parent / "state.json"
-    if state_file.exists():
-        state_file.unlink()
-
-    workflow_id = str(uuid.uuid4())[:8]
-
-    _workflow = {
-        "id": workflow_id,
-        "status": "running",
-        "phase": None,
-        "error": None,
-        "thread": None,
-    }
-
-    thread = threading.Thread(
-        target=_run_workflow_bg,
-        args=(workflow_id, task, scope, model, max_turns, project_dir),
-        daemon=True,
-    )
-    _workflow["thread"] = thread
-    thread.start()
-
-    return jsonify({"workflow_id": workflow_id, "status": "running"})
-
-
-@app.route("/api/workflow/status")
-def api_workflow_status():
-    """Get the current workflow status."""
-    return jsonify({
-        "workflow_id": _workflow["id"],
-        "status": _workflow["status"],
-        "phase": _workflow["phase"],
-        "error": _workflow["error"],
-    })
-
-
-def _run_workflow_bg(workflow_id: str, task: str, scope: str, model: str, max_turns: int, project_dir: str):
-    """Run the orchestrator workflow in a background thread."""
-    global _workflow
-
-    from integration.events import log_event
-    from orchestrator.run import run_workflow
-
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(run_workflow(
-                org_spec_path=_org_spec_path,
-                task=task,
-                scope=scope,
-                model=model,
-                cwd=project_dir,
-                max_turns=max_turns,
-                events_path=_events_path,
-            ))
-        finally:
-            loop.close()
-
-        _workflow["status"] = "complete"
-
-    except Exception as e:
-        _workflow["status"] = "error"
-        _workflow["error"] = str(e)
-        traceback.print_exc()
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -238,21 +132,17 @@ def main():
     parser.add_argument("--events", default=".aorta/events.jsonl", help="Events JSONL path")
     parser.add_argument("--port", default=5111, type=int, help="Server port")
     parser.add_argument("--host", default="127.0.0.1", help="Server host")
-    parser.add_argument("--cwd", default=".", help="Target project directory for orchestrator")
-
     args = parser.parse_args()
 
-    global _org_spec, _org_spec_path, _events_path, _cwd
+    global _org_spec, _org_spec_path, _events_path
     _events_path = Path(args.events)
     _org_spec_path = args.org_spec
-    _cwd = args.cwd
     with open(args.org_spec) as f:
         _org_spec = yaml.safe_load(f)
 
     print(f"Dashboard: http://{args.host}:{args.port}")
     print(f"Org spec:  {args.org_spec}")
     print(f"Events:    {args.events}")
-    print(f"Project:   {args.cwd}")
     app.run(host=args.host, port=args.port, debug=False, threaded=True)
 
 

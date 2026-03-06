@@ -138,22 +138,11 @@
   .event .badge.activated { background: #1a2a3a; color: var(--blue); }
   .event .badge.fulfilled { background: #1a3a1a; color: var(--green); }
   .event .badge.violated { background: #3a2a1a; color: var(--amber); }
-  .event .badge.phase_start { background: #2a1a3a; color: #bb9af7; }
-  .event .badge.phase_complete { background: #1a3a2a; color: var(--green); }
-  .event .badge.workflow { background: #2a2a1a; color: var(--amber); }
   .event .badge.agent_text { background: #1a2a2a; color: var(--blue); }
   .event .badge.agent_tool { background: #2a2a1a; color: var(--amber); }
   .event .badge.agent_turn { background: #1a2a1a; color: var(--dim); }
   .event .badge.bash_approve { background: #1a3a1a; color: var(--green); }
   .event .badge.bash_block { background: #3a1a1a; color: var(--red); }
-  .event.phase-marker {
-    background: var(--surface); border-left: 3px solid #bb9af7;
-    margin: 6px 0; font-weight: 600;
-  }
-  .event.workflow-marker {
-    background: var(--surface); border-left: 3px solid var(--amber);
-    margin: 6px 0; font-weight: 600;
-  }
   .event .detail { color: var(--text); }
   .event .agent-ref { color: var(--accent); }
   .event .path-ref { color: var(--dim); }
@@ -177,51 +166,6 @@
   .conn { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .conn.connected { background: var(--green); }
   .conn.disconnected { background: var(--red); }
-
-  /* Orchestrator panel */
-  .orch-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
-  .orch-field { display: flex; flex-direction: column; gap: 3px; }
-  .orch-field label { font-size: 10px; text-transform: uppercase; color: var(--dim); letter-spacing: 0.05em; }
-  .orch-field input, .orch-field select {
-    background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-    color: var(--text); padding: 5px 8px; font-size: 12px; font-family: inherit;
-  }
-  .orch-field input:focus, .orch-field select:focus {
-    outline: none; border-color: var(--accent);
-  }
-  .orch-field input.wide { width: 340px; }
-  .orch-field input.med { width: 140px; }
-  .orch-field input.narrow { width: 60px; }
-  .orch-btn {
-    padding: 5px 16px; border-radius: 4px; border: 1px solid var(--accent);
-    background: transparent; color: var(--accent); cursor: pointer;
-    font-size: 12px; font-family: inherit; font-weight: 600;
-  }
-  .orch-btn:hover { background: var(--accent); color: var(--bg); }
-  .orch-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .orch-btn:disabled:hover { background: transparent; color: var(--accent); }
-  .orch-status {
-    font-size: 12px; margin-left: auto; display: flex; align-items: center; gap: 6px;
-  }
-  .orch-status .dot {
-    width: 8px; height: 8px; border-radius: 50%; display: inline-block;
-  }
-  .orch-status .dot.idle { background: var(--dim); }
-  .orch-status .dot.running { background: var(--green); animation: pulse 1s infinite; }
-  .orch-status .dot.complete { background: var(--green); }
-  .orch-status .dot.error { background: var(--red); }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-
-  .phase-tracker {
-    display: flex; gap: 4px; align-items: center; margin-top: 10px; font-size: 12px;
-  }
-  .phase-tracker .phase {
-    padding: 3px 10px; border-radius: 4px; border: 1px solid var(--border);
-    color: var(--dim); background: var(--bg);
-  }
-  .phase-tracker .phase.done { border-color: var(--green); color: var(--green); }
-  .phase-tracker .phase.active { border-color: var(--accent); color: var(--accent); background: var(--surface2); }
-  .phase-tracker .arrow { color: var(--dim); }
 
   /* Agent detail panel */
   .detail-close-btn {
@@ -331,50 +275,9 @@
   <div class="bottom-bar">
     <div class="tab-bar">
       <button class="tab-btn active" onclick="switchTab('norms')">Norms</button>
-      <button class="tab-btn" onclick="switchTab('orchestrator')">Orchestrator</button>
     </div>
     <div class="tab-content active" id="tab-norms">
       <div class="norms-list" id="norms-list"></div>
-    </div>
-    <div class="tab-content" id="tab-orchestrator">
-      <div class="orch-form" id="orch-form">
-        <div class="orch-field">
-          <label>Task</label>
-          <input type="text" class="wide" id="orch-task" placeholder="Add a health check endpoint">
-        </div>
-        <div class="orch-field">
-          <label>Project Dir</label>
-          <input type="text" class="med" id="orch-project" placeholder="examples/health_check_project">
-        </div>
-        <div class="orch-field">
-          <label>Scope</label>
-          <input type="text" class="med" id="orch-scope" placeholder="src/health/">
-        </div>
-        <div class="orch-field">
-          <label>Model</label>
-          <select id="orch-model">
-            <option value="sonnet">sonnet</option>
-            <option value="haiku">haiku</option>
-            <option value="opus">opus</option>
-          </select>
-        </div>
-        <div class="orch-field">
-          <label>Turns</label>
-          <input type="number" class="narrow" id="orch-turns" value="10" min="1" max="50">
-        </div>
-        <button class="orch-btn" id="orch-start" onclick="startWorkflow()">Start Workflow</button>
-        <div class="orch-status">
-          <span class="dot idle" id="orch-dot"></span>
-          <span id="orch-status-text">idle</span>
-        </div>
-      </div>
-      <div class="phase-tracker" id="phase-tracker">
-        <span class="phase" id="phase-architect">architect</span>
-        <span class="arrow">&rarr;</span>
-        <span class="phase" id="phase-implementer">implementer</span>
-        <span class="arrow">&rarr;</span>
-        <span class="phase" id="phase-reviewer">reviewer</span>
-      </div>
     </div>
   </div>
 </div>
@@ -386,7 +289,6 @@ const state = {
   stats: { checks: 0, approved: 0, blocked: 0 },
   events: [],
   orgSpec: null,
-  workflow: { status: 'idle', phases: {} },
   selectedAgent: null,
   agentEvents: {},
 };
@@ -618,37 +520,6 @@ function addEventToFeed(ev) {
       <span class="agent-ref">${esc(ev.agent || '')}</span>
       <span class="detail">${esc(ev.deontic)} ${esc(ev.objective)}</span>
     `;
-  } else if (ev.type === 'phase_start') {
-    div.className = 'event phase-marker';
-    div.innerHTML = `
-      <span class="ts">${ts}</span>
-      <span class="badge phase_start">\u25B6 ${esc(ev.phase)}</span>
-      <span class="agent-ref">${esc(ev.agent || '')}</span>
-      <span class="detail">${esc(ev.task || '')}</span>
-    `;
-  } else if (ev.type === 'phase_complete') {
-    div.className = 'event phase-marker';
-    div.innerHTML = `
-      <span class="ts">${ts}</span>
-      <span class="badge phase_complete">\u2713 ${esc(ev.phase)} done</span>
-      <span class="agent-ref">${esc(ev.agent || '')}</span>
-    `;
-  } else if (ev.type === 'workflow_start') {
-    div.className = 'event workflow-marker';
-    div.innerHTML = `
-      <span class="ts">${ts}</span>
-      <span class="badge workflow">\u25B6 workflow</span>
-      <span class="detail">${esc(ev.task || '')}</span>
-      <span class="path-ref">scope: ${esc(ev.scope || '')}</span>
-    `;
-  } else if (ev.type === 'workflow_complete') {
-    div.className = 'event workflow-marker';
-    const statusBadge = ev.status === 'success' ? 'phase_complete' : 'block';
-    div.innerHTML = `
-      <span class="ts">${ts}</span>
-      <span class="badge ${statusBadge}">\u2713 workflow ${esc(ev.status || '')}</span>
-      <span class="detail">${esc(ev.error || '')}</span>
-    `;
   } else if (ev.type === 'agent_text') {
     const preview = (ev.text || '').substring(0, 80);
     div.innerHTML = `
@@ -721,22 +592,6 @@ function processEvent(ev) {
       if (state.obligations[key]) state.obligations[key].status = ev.change;
     }
     renderObligations();
-  } else if (ev.type === 'phase_start') {
-    updatePhaseTracker(ev.phase, 'active');
-    state.workflow.status = 'running';
-    updateWorkflowStatus();
-  } else if (ev.type === 'phase_complete') {
-    updatePhaseTracker(ev.phase, 'done');
-  } else if (ev.type === 'workflow_start') {
-    state.workflow.status = 'running';
-    state.workflow.phases = {};
-    resetPhaseTracker();
-    updateWorkflowStatus();
-  } else if (ev.type === 'workflow_complete') {
-    state.workflow.status = ev.status === 'success' ? 'complete' : 'error';
-    updateWorkflowStatus();
-  }
-
   // Route agent-detail events only to per-agent store (not the main feed)
   const agentDetailTypes = ['agent_text', 'agent_tool_call', 'agent_turn_complete'];
   if (ev.agent && agentDetailTypes.includes(ev.type)) {
@@ -762,90 +617,6 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.querySelector(`.tab-btn[onclick="switchTab('${name}')"]`).classList.add('active');
   document.getElementById(`tab-${name}`).classList.add('active');
-}
-
-// --- Orchestrator ---
-
-async function startWorkflow() {
-  const task = document.getElementById('orch-task').value.trim();
-  const projectDir = document.getElementById('orch-project').value.trim();
-  const scope = document.getElementById('orch-scope').value.trim();
-  const model = document.getElementById('orch-model').value;
-  const maxTurns = parseInt(document.getElementById('orch-turns').value) || 10;
-
-  if (!task || !scope) { alert('Task and scope are required'); return; }
-
-  document.getElementById('orch-start').disabled = true;
-  state.workflow.status = 'running';
-  state.workflow.phases = {};
-  state.agentEvents = {};
-  state.selectedAgent = null;
-  closeAgentDetail();
-  resetPhaseTracker();
-  updateWorkflowStatus();
-
-  try {
-    const resp = await fetch('/api/workflow/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ task, scope, model, max_turns: maxTurns, project_dir: projectDir }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      alert(data.error || 'Failed to start workflow');
-      state.workflow.status = 'error';
-      updateWorkflowStatus();
-      document.getElementById('orch-start').disabled = false;
-      return;
-    }
-    pollWorkflowStatus();
-  } catch (e) {
-    alert('Failed to start workflow: ' + e.message);
-    state.workflow.status = 'error';
-    updateWorkflowStatus();
-    document.getElementById('orch-start').disabled = false;
-  }
-}
-
-function pollWorkflowStatus() {
-  const interval = setInterval(async () => {
-    try {
-      const resp = await fetch('/api/workflow/status');
-      const data = await resp.json();
-      if (data.status !== 'running') {
-        state.workflow.status = data.status;
-        if (data.error) state.workflow.error = data.error;
-        updateWorkflowStatus();
-        document.getElementById('orch-start').disabled = false;
-        clearInterval(interval);
-      }
-    } catch (e) { /* ignore poll errors */ }
-  }, 2000);
-}
-
-function updateWorkflowStatus() {
-  const dot = document.getElementById('orch-dot');
-  const text = document.getElementById('orch-status-text');
-  dot.className = 'dot ' + state.workflow.status;
-  text.textContent = state.workflow.status;
-  if (state.workflow.status === 'error' && state.workflow.error) {
-    text.textContent = 'error: ' + state.workflow.error;
-  }
-}
-
-function updatePhaseTracker(phase, status) {
-  state.workflow.phases[phase] = status;
-  const el = document.getElementById('phase-' + phase);
-  if (el) {
-    el.className = 'phase ' + status;
-  }
-}
-
-function resetPhaseTracker() {
-  ['architect', 'implementer', 'reviewer'].forEach(p => {
-    const el = document.getElementById('phase-' + p);
-    if (el) el.className = 'phase';
-  });
 }
 
 function esc(s) {
@@ -877,17 +648,6 @@ async function init() {
     const events = await (await fetch('/api/events?limit=200')).json();
     events.forEach(processEvent);
   } catch (e) { console.error('Failed to load events', e); }
-
-  try {
-    const resp = await fetch('/api/workflow/status');
-    const data = await resp.json();
-    if (data.status === 'running') {
-      state.workflow.status = 'running';
-      updateWorkflowStatus();
-      document.getElementById('orch-start').disabled = true;
-      pollWorkflowStatus();
-    }
-  } catch (e) { /* ignore */ }
 
   connectSSE();
 }

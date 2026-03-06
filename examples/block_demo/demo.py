@@ -31,7 +31,7 @@ def emit(event: dict):
 
 
 def run_demo():
-    svc = GovernanceService(SPEC_PATH, engine="python")
+    svc = GovernanceService(SPEC_PATH)
 
     print()
     print("=" * 68)

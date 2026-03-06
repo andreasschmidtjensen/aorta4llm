@@ -52,7 +52,7 @@ Same file, same agent, same role — permitted after organizational state change
 - Python >= 3.10
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
-SWI-Prolog is **optional** — the default pure-Python engine requires no external dependencies. Install `pyswip` and SWI-Prolog only if you need the Prolog backend for formal verification workflows.
+The pure-Python engine requires no external dependencies beyond PyYAML.
 
 ## Quick start
 
@@ -66,8 +66,6 @@ uv pip install -e "/path/to/aorta4llm"
 # With dashboard (adds Flask):
 uv pip install -e "/path/to/aorta4llm[dashboard]"
 
-# With Prolog backend (adds pyswip, requires SWI-Prolog):
-uv pip install -e "/path/to/aorta4llm[prolog]"
 ```
 
 ### 2. Define your organization
@@ -161,21 +159,7 @@ Add to your project's `.claude/settings.local.json`:
 
 Every `Write`, `Edit`, and `NotebookEdit` call now goes through the governance check.
 
-### 4. Multi-agent orchestrator (alternative)
-
-Instead of manual registration, run a full architect → implementer → reviewer workflow automatically:
-
-```bash
-uv run python -m orchestrator.run \
-    --org-spec org-specs/three_role_workflow.yaml \
-    --task "Add a health check endpoint" \
-    --scope src/health/ \
-    --cwd /path/to/target/project
-```
-
-The orchestrator spawns each agent as a Claude Code subprocess, configures hooks automatically, enforces governance at every tool call, and logs all events for the dashboard. Each agent gets a role-appropriate system prompt with its active obligations and permissions.
-
-### 5. Start the dashboard (optional)
+### 4. Start the dashboard (optional)
 
 ```bash
 uv run python -m dashboard.server --org-spec org-specs/feature_workflow.yaml --port 5111
@@ -239,7 +223,7 @@ rules:
 ## How it works
 
 1. **YAML org spec** is compiled to structured facts and rules
-2. The **governance engine** (pure Python by default, or SWI-Prolog) evaluates norms deterministically — no LLM involved in enforcement
+2. The **governance engine** (pure Python) evaluates norms deterministically — no LLM involved in enforcement
 3. **Claude Code hooks** intercept tool calls, translate them to governance actions, and check permissions before execution
 4. **Prohibitions with variables** (like `write_file(Path)`) are evaluated at check time — the concrete file path binds the variable, propagating through the condition
 5. **Event log** (`.aorta/events.jsonl`) records all checks for the dashboard and auditing
@@ -250,15 +234,13 @@ rules:
 governance/
   terms.py           Term representation, parser, unification
   evaluator.py       Condition evaluator, fact database
-  py_engine.py       Pure-Python governance engine (default)
-  engine.py          SWI-Prolog engine (optional, via pyswip)
-  engine_types.py    Shared data types
+  py_engine.py       Governance engine
+  engine_types.py    Data types
   compiler.py        YAML org specs -> facts/rules
-  service.py         High-level API with engine selection
+  service.py         High-level API
   validator.py       Org spec schema validation
   bash_analyzer.py   Heuristic + LLM bash command analysis
-  prolog/            Prolog source files (NC phase, OG phase)
-  tests/             pytest test suite (209 tests)
+  tests/             pytest test suite
 integration/
   hooks.py           Claude Code hook handlers + CLI
   events.py          JSONL event logger
@@ -270,10 +252,6 @@ cli/
 dashboard/
   server.py          Flask web dashboard
   static/index.html  Dashboard UI
-orchestrator/
-  run.py             Multi-agent workflow (architect → implementer → reviewer)
-  agent.py           Claude Code CLI subprocess runner
-  prompts.py         Role-appropriate system prompt builder
 org-specs/           Example organizational specifications
   templates/         Templates for aorta init
 examples/            Runnable demos
@@ -293,12 +271,7 @@ The governance cycle has three phases:
 
 **Permissions are derived, not stored.** An action is permitted unless an active prohibition blocks it. This follows Section 4.1 of Jensen's dissertation.
 
-**Variable sharing** between norm objectives and conditions is the core mechanism. When the engine checks `write_file('src/auth/login.py')` against a prohibition on `write_file(Path)`, unification binds `Path` to `'src/auth/login.py'`, which propagates through the condition `not(in_scope(Path, Scope))`. The Python engine implements this with structural unification; the Prolog engine uses native Prolog unification.
-
-Two engine backends are available:
-
-- **Python engine** (default): Pure Python, no external dependencies. Implements term representation, unification, and condition evaluation. Sufficient for all governance use cases.
-- **Prolog engine** (optional): SWI-Prolog via pyswip. Required for advanced use cases like formal model checking. Install with `pip install -e ".[prolog]"` and `brew install swi-prolog`.
+**Variable sharing** between norm objectives and conditions is the core mechanism. When the engine checks `write_file('src/auth/login.py')` against a prohibition on `write_file(Path)`, unification binds `Path` to `'src/auth/login.py'`, which propagates through the condition `not(in_scope(Path, Scope))`. The engine implements this with structural unification in pure Python.
 
 See [DESIGN.md](DESIGN.md) for the full architecture, metamodel definition, and API spec.
 

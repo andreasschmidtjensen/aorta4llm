@@ -8,32 +8,17 @@ from governance.compiler import compile_org_spec
 from governance.engine_types import NotifyResult, PermissionResult
 
 
-def _create_engine(engine: str = "auto"):
-    """Create a governance engine based on the requested backend.
-
-    Args:
-        engine: "auto" (try prolog, fall back to python), "prolog", "python"
-    """
-    if engine == "python":
-        from governance.py_engine import PythonGovernanceEngine
-        return PythonGovernanceEngine()
-    elif engine == "prolog":
-        from governance.engine import GovernanceEngine
-        return GovernanceEngine()
-    else:  # auto
-        try:
-            from governance.engine import GovernanceEngine
-            return GovernanceEngine()
-        except (ImportError, OSError, Exception):
-            from governance.py_engine import PythonGovernanceEngine
-            return PythonGovernanceEngine()
+def _create_engine():
+    """Create the governance engine."""
+    from governance.py_engine import PythonGovernanceEngine
+    return PythonGovernanceEngine()
 
 
 class GovernanceService:
     """High-level service wrapping the governance engine."""
 
-    def __init__(self, org_spec_path: str | Path, engine: str = "auto"):
-        self._engine = _create_engine(engine)
+    def __init__(self, org_spec_path: str | Path):
+        self._engine = _create_engine()
         spec = compile_org_spec(org_spec_path)
         self._engine.load_org_spec(spec)
         self._agent_scopes: dict[str, str] = {}

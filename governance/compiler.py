@@ -103,16 +103,33 @@ def _compile_norms(norms: list, spec: CompiledSpec) -> None:
 def _compile_forbidden_outside(norm: dict, spec: CompiledSpec) -> None:
     """Compile forbidden_outside shorthand.
 
-    Forbids write_file(Path) for any Path that does not start with `path`.
-    Emits one cond/5 fact and auto-includes the in_scope/2 rule if missing.
+    Forbids write_file(Path) for any Path not inside one of the allowed scopes.
+    Supports single `path` or multi-scope `paths` list.
     """
     role = norm["role"]
-    path = norm["path"].rstrip("/") + "/"
-    quoted = f"'{path}'"
-    spec.facts.append(
-        f"cond({role}, forbidden, write_file(Path), false, "
-        f"not(in_scope(Path, {quoted})))"
-    )
+
+    # Support both single path and multi-scope paths list
+    if "paths" in norm:
+        scope_paths = [p.rstrip("/") + "/" for p in norm["paths"]]
+    else:
+        scope_paths = [norm["path"].rstrip("/") + "/"]
+
+    if len(scope_paths) == 1:
+        quoted = f"'{scope_paths[0]}'"
+        spec.facts.append(
+            f"cond({role}, forbidden, write_file(Path), false, "
+            f"not(in_scope(Path, {quoted})))"
+        )
+    else:
+        # Multi-scope: block if not in ANY of the allowed scopes
+        # not(in_any_scope(Path, ['src/', 'tests/']))
+        scope_list = "[" + ", ".join(f"'{p}'" for p in scope_paths) + "]"
+        spec.facts.append(
+            f"cond({role}, forbidden, write_file(Path), false, "
+            f"not(in_any_scope(Path, {scope_list})))"
+        )
+        _ensure_in_any_scope_rule(spec)
+
     _ensure_in_scope_rule(spec)
 
 
@@ -194,6 +211,14 @@ def _ensure_in_scope_rule(spec: CompiledSpec) -> None:
     rule = "in_scope(Path, Scope) :- atom_concat(Scope, _, Path)."
     if rule not in spec.rules:
         spec.rules.append(rule)
+
+
+def _ensure_in_any_scope_rule(spec: CompiledSpec) -> None:
+    """Add in_any_scope/2 rule: true if Path starts with any scope in the list."""
+    rule = "in_any_scope(Path, Scopes) :- member(Scope, Scopes), in_scope(Path, Scope)."
+    if rule not in spec.rules:
+        spec.rules.append(rule)
+    _ensure_in_scope_rule(spec)
 
 
 def _compile_rules(rules: list, spec: CompiledSpec) -> None:

@@ -4,19 +4,10 @@
 # everything but cannot touch source files. The implementer cannot push
 # until the reviewer has written a review document.
 #
-# Usage (orchestrator):
-#   uv run python -m orchestrator.run \
-#       --org-spec org-specs/templates/review-gate.yaml \
-#       --task "Add user authentication" \
-#       --scope src/auth/ \
-#       --cwd /path/to/project
-#
-# Or manually, register both agents before starting:
-#   uv run python -m integration.hooks register \
-#       --org-spec org-specs/templates/review-gate.yaml \
+# Register both agents before starting:
+#   aorta hook register --org-spec .aorta/review-gate.yaml \
 #       --agent impl-1 --role implementer --scope src/
-#   uv run python -m integration.hooks register \
-#       --org-spec org-specs/templates/review-gate.yaml \
+#   aorta hook register --org-spec .aorta/review-gate.yaml \
 #       --agent rev-1 --role reviewer
 
 organization: review_gate

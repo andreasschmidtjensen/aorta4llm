@@ -15,9 +15,22 @@ aorta init --template safe-agent --scope src/ --agent dev
 ```
 
 This creates:
-- `.aorta/safe-agent.yaml` — the org spec (governance rules)
+- `.aorta/safe-agent.yaml` — the org spec (governance rules), with `forbidden_outside` path set to your `--scope`
 - `.claude/settings.local.json` — Claude Code hook configuration
+- `.aorta/events.jsonl` — event log (project-local)
 - Registers agent `dev` with scope `src/`
+
+Multiple scopes are supported:
+
+```bash
+aorta init --template safe-agent --scope src/ tests/ --agent dev
+```
+
+Strict mode hooks reads too (blocks the agent from reading sensitive files):
+
+```bash
+aorta init --template safe-agent --scope src/ --agent dev --strict
+```
 
 Available templates (`aorta init --list-templates`):
 - **safe-agent** — single agent scoped to a directory
@@ -37,15 +50,15 @@ roles:
     capabilities: [read_file, write_file, execute_command]
 
 norms:
-  # Keep writes inside src/
+  # Keep writes inside src/ and tests/
   - type: forbidden_outside
     role: agent
-    path: src/
+    paths: [src/, tests/]
 
   # Block writes to sensitive paths
   - type: forbidden_paths
     role: agent
-    paths: [".env", "secrets/", ".claude/"]
+    paths: [".env", "secrets/"]
 
   # Require tests before committing
   - type: required_before
@@ -86,11 +99,14 @@ safe_commands: ["pytest", "git status", "git diff", "git log", "npm test"]
 soft_block_window: 30
 ```
 
+**Note:** `.aorta/` and `.claude/` are always protected — the hook engine
+hard-blocks writes to governance infrastructure regardless of your org spec.
+
 ## Norm types
 
 | Type | What it blocks | Key fields |
 |------|---------------|------------|
-| `forbidden_outside` | `write_file` outside a directory | `path` |
+| `forbidden_outside` | `write_file` outside allowed directories | `path` or `paths` (list) |
 | `forbidden_paths` | `write_file` matching path prefixes | `paths` (list) |
 | `forbidden_command` | `execute_command` containing a substring | `command_pattern`, optional `severity` |
 | `required_before` | `execute_command` until an achievement exists | `command_pattern`, `requires` |
@@ -102,7 +118,7 @@ Any norm can have `severity: soft` (confirmation-required) or `severity: hard` (
 ## Soft vs hard blocks
 
 - **Hard block**: action denied. The agent sees the reason and cannot proceed.
-- **Soft block**: action denied with "CONFIRMATION REQUIRED" message. If the user tells the agent to proceed and it retries within the configured window, the retry is approved.
+- **Soft block**: action denied with a "SOFT BLOCK" message that instructs the agent to ask the user for confirmation. If the agent retries the exact same action within the configured window, the retry is approved automatically.
 
 This guards against post-compaction hallucination — if the agent tries to commit based on stale context, it gets blocked and must ask the user.
 
@@ -132,40 +148,72 @@ aorta dry-run --org-spec .aorta/safe-agent.yaml \
 
 When Claude Code calls a tool (Write, Edit, Bash, etc.):
 
-1. **Hook fires** — settings.local.json routes matched tools to the governance hook
-2. **Permission check** — the engine checks the action against active norms
-3. **Bash analysis** (if enabled) — for Bash commands that pass:
+1. **Hook fires** — settings.local.json routes matched tools to `aorta hook pre-tool-use`
+2. **Self-protection** — writes to `.aorta/` and `.claude/` are always denied
+3. **Agent check** — unregistered agents are denied (fail-closed)
+4. **Permission check** — the engine checks the action against active norms
+5. **Bash analysis** (if enabled) — for Bash commands that pass:
    - Fast path: known safe commands skip analysis
    - Heuristic: regex extracts write paths from `cp`, `mv`, `>`, `tee`, `rm`, etc.
    - LLM fallback: ambiguous commands (variable expansion, complex pipes) go to Haiku (~5s)
    - Each extracted write path is checked against file-write norms
-4. **Block or approve** — hard blocks deny; soft blocks prompt for confirmation
+6. **Block or approve** — hard blocks deny; soft blocks prompt for confirmation
+
+## Check governance state
+
+```bash
+aorta status --org-spec .aorta/safe-agent.yaml
+```
+
+Shows registered agents, active norms, achievements, and recent activity (approved/blocked counts, last blocked actions). Add `--json` for machine-readable output.
+
+## Reset state
+
+```bash
+aorta reset --org-spec .aorta/safe-agent.yaml
+```
+
+Clears registered agents, achievements, and events. Use `--keep-events` to preserve the event log. Agents must be re-registered afterward.
 
 ## Dashboard
 
 ```bash
-uv run python -m dashboard.server --org-spec .aorta/safe-agent.yaml --port 5111
+uv run --extra dashboard python -m dashboard.server \
+  --org-spec .aorta/safe-agent.yaml --events .aorta/events.jsonl --port 5111
 ```
+
+Or pass `--with-dashboard` to `aorta init` to get the command printed for you.
 
 Open http://localhost:5111. Shows permission checks, bash analysis events, norm changes, and per-agent detail. Events are tagged with `org_spec` for filtering across projects.
 
 ## Multi-agent setup
 
-For projects with multiple agents:
+Register agents first:
 
 ```bash
-uv run python -m integration.hooks register \
-  --org-spec .aorta/workflow.yaml \
+aorta hook register --org-spec .aorta/workflow.yaml \
   --agent impl-1 --role implementer --scope src/auth/
 
-uv run python -m integration.hooks register \
-  --org-spec .aorta/workflow.yaml \
+aorta hook register --org-spec .aorta/workflow.yaml \
   --agent rev-1 --role reviewer
 ```
+
+Then set `AORTA_AGENT` per terminal before launching Claude Code:
+
+```bash
+# Terminal 1
+export AORTA_AGENT=impl-1
+claude
+
+# Terminal 2
+export AORTA_AGENT=rev-1
+claude
+```
+
+The hook reads `AORTA_AGENT` from the environment to identify which agent is making the call.
 
 ## Limitations
 
 - **Bash escape hatch**: an agent can construct commands that evade heuristic detection (e.g., `python -c "open('x','w')..."`). LLM analysis catches most of these but isn't bulletproof.
 - **No filesystem monitoring**: governance only sees tool calls, not side effects.
-- **Soft block cache is per-session**: each hook invocation is a fresh process. The soft block retry mechanism works within a single Claude Code session.
 - **LLM analysis latency**: ~5s per ambiguous bash command. The heuristic pre-filter handles ~80% of patterns instantly.

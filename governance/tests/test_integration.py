@@ -17,16 +17,16 @@ _SPEC_PATH = Path(__file__).parent.parent.parent / "org-specs" / "three_role_wor
 
 
 @pytest.fixture
-def service(engine_backend):
+def service():
     """Fresh service loaded with three_role_workflow spec."""
-    return GovernanceService(_SPEC_PATH, engine=engine_backend)
+    return GovernanceService(_SPEC_PATH)
 
 
 @pytest.fixture
-def hook(tmp_path, engine_backend):
+def hook(tmp_path):
     """Fresh hook with temporary state file."""
     state_file = tmp_path / "state.json"
-    return GovernanceHook(_SPEC_PATH, state_path=state_file, engine=engine_backend)
+    return GovernanceHook(_SPEC_PATH, state_path=state_file)
 
 
 class TestThreeRoleWorkflow:
@@ -184,12 +184,14 @@ class TestHookIntegration:
         )
         assert result["decision"] == "approve"
 
-    def test_pre_tool_use_approves_unregistered_agent(self, hook):
+    def test_pre_tool_use_blocks_unregistered_agent(self, hook):
+        """Unregistered agents are denied (fail-closed)."""
         result = hook.pre_tool_use(
             {"tool_name": "Write", "tool_input": {"file_path": "x.py"}},
             agent="unknown-agent",
         )
-        assert result["decision"] == "approve"
+        assert result["decision"] == "block"
+        assert "not registered" in result["reason"]
 
     def test_edit_maps_to_write_file(self, hook):
         hook.register_agent("impl-1", "implementer", scope="src/auth/")
@@ -215,16 +217,16 @@ class TestHookIntegration:
         )
         assert result["decision"] == "approve"
 
-    def test_state_persistence(self, tmp_path, engine_backend):
+    def test_state_persistence(self, tmp_path):
         """State survives across hook instances."""
         state_file = tmp_path / "state.json"
 
         # First instance: register agent
-        hook1 = GovernanceHook(_SPEC_PATH, state_path=state_file, engine=engine_backend)
+        hook1 = GovernanceHook(_SPEC_PATH, state_path=state_file)
         hook1.register_agent("impl-1", "implementer", scope="src/auth/")
 
         # Second instance: replays state, agent is known
-        hook2 = GovernanceHook(_SPEC_PATH, state_path=state_file, engine=engine_backend)
+        hook2 = GovernanceHook(_SPEC_PATH, state_path=state_file)
         result = hook2.pre_tool_use(
             {"tool_name": "Write", "tool_input": {"file_path": "src/api/x.py"}},
             agent="impl-1",
@@ -571,7 +573,7 @@ class TestForbiddenCommand:
             agent="dev",
         )
         assert result["decision"] == "block"
-        assert "CONFIRMATION REQUIRED" in result["reason"]
+        assert "SOFT BLOCK" in result["reason"]
 
     def test_soft_block_retry_approves(self, tmp_path):
         hook = self._make_hook(tmp_path, [{
@@ -620,7 +622,7 @@ class TestForbiddenCommand:
 
         r1 = hook.pre_tool_use(cmd, agent="dev")
         assert r1["decision"] == "block"
-        assert "CONFIRMATION" not in r1.get("reason", "")
+        assert "SOFT BLOCK" not in r1.get("reason", "")
 
         r2 = hook.pre_tool_use(cmd, agent="dev")
         assert r2["decision"] == "block"

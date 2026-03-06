@@ -12,25 +12,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-prolog = [
-    "pyswip>=0.3.1",
-]
 dev = [
     "pytest>=7.0",
-    "pyswip>=0.3.1",
 ]
 dashboard = [
     "flask>=3.0",
-]
-orchestrator = [
-    # Requires Claude Code CLI: npm install -g @anthropic-ai/claude-code
 ]
 
 [project.scripts]
 aorta = "cli.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["governance", "integration", "dashboard", "orchestrator", "cli"]
+packages = ["governance", "integration", "dashboard", "cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["governance/tests"]

@@ -1,7 +1,6 @@
-"""In-memory fact database and condition evaluator for the pure-Python engine.
+"""In-memory fact database and condition evaluator.
 
-Replaces SWI-Prolog's dynamic database and call/1 evaluation with a Python
-implementation that supports the subset of Prolog used by the governance rules:
+Supports the subset of Prolog-like operations used by the governance rules:
 pattern-matching queries, negation-as-failure, atom_concat, user-defined rules.
 """
 

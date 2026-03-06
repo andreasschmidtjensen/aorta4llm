@@ -1,8 +1,7 @@
-"""Pure-Python governance engine — no SWI-Prolog required.
+"""Pure-Python governance engine.
 
-Drop-in replacement for GovernanceEngine with the same public API.
-Reimplements the NC (Norm Check) and OG (Option Generation) phases
-using the Python term/evaluator modules instead of pyswip.
+Implements the NC (Norm Check) and OG (Option Generation) phases
+using the Python term/evaluator modules.
 """
 
 from __future__ import annotations
@@ -14,6 +13,46 @@ from governance.terms import (
     Atom, Term, Var, WILDCARD, TermType, Substitution,
     apply_subst, is_ground, parse_term, term_to_str, unify,
 )
+
+
+def _describe_condition(cond: TermType, subst: Substitution) -> str:
+    """Generate a human-readable explanation of why a condition blocked."""
+    cond = apply_subst(cond, subst)
+
+    if isinstance(cond, Term) and cond.functor == "not" and len(cond.args) == 1:
+        inner = cond.args[0]
+        if isinstance(inner, Term) and inner.functor == "in_scope":
+            # not(in_scope(Path, Scope)) -> "path is outside allowed scope 'src/'"
+            scope = term_to_str(inner.args[1]) if len(inner.args) > 1 else "?"
+            return f"path is outside allowed scope {scope}"
+        if isinstance(inner, Term) and inner.functor == "in_any_scope":
+            return "path is outside all allowed scopes"
+        if isinstance(inner, Term) and inner.functor == "achieved":
+            req = term_to_str(inner.args[0]) if inner.args else "?"
+            return f"requires '{req}' to be achieved first"
+        return f"condition not met: {term_to_str(inner)}"
+
+    if isinstance(cond, Term) and cond.functor == "atom_concat":
+        # atom_concat('prefix', _, Path) -> "path matches forbidden prefix 'prefix'"
+        if len(cond.args) >= 1 and isinstance(cond.args[0], Atom):
+            return f"path matches forbidden prefix '{cond.args[0].value}'"
+
+    if isinstance(cond, Term) and cond.functor == "str_contains":
+        if len(cond.args) >= 2 and isinstance(cond.args[1], Atom):
+            return f"command contains '{cond.args[1].value}'"
+
+    if isinstance(cond, Term) and cond.functor == ",":
+        # Conjunction — describe the most relevant part
+        parts = []
+        left_desc = _describe_condition(cond.args[0], subst)
+        right_desc = _describe_condition(cond.args[1], subst)
+        if left_desc:
+            parts.append(left_desc)
+        if right_desc:
+            parts.append(right_desc)
+        return " and ".join(parts) if parts else term_to_str(cond)
+
+    return term_to_str(cond)
 
 
 class PythonGovernanceEngine:
@@ -123,12 +162,12 @@ class PythonGovernanceEngine:
             else:
                 action_term = Term(action, (Atom(params.get("path", "")),))
 
-            blocked_obj, severity = self._check_action_blocked(agent, role, action_term)
+            blocked_obj, severity, block_reason = self._check_action_blocked(agent, role, action_term)
             if blocked_obj is not None:
                 action_str = term_to_str(action_term)
                 return PermissionResult(
                     permitted=False,
-                    reason=f"prohibition active: {action_str} blocked for {agent} in role {role}",
+                    reason=f"{action_str} blocked for {agent} (role: {role}): {block_reason}",
                     violation=f"viol('{agent}', {role}, forbidden, {action_str})",
                     severity=severity,
                 )
@@ -331,14 +370,14 @@ class PythonGovernanceEngine:
 
     def _check_action_blocked(
         self, agent: str, role: str, action: Term,
-    ) -> tuple[TermType | None, str]:
+    ) -> tuple[TermType | None, str, str]:
         """Check if an action is blocked by any prohibition.
 
         Two paths (matching nc.pl's two check_action_blocked clauses):
         1. Check activated norm/5 facts with forbidden deontic
         2. Check cond/5 facts directly — unify action with objective to bind variables
 
-        Returns (blocking_objective, severity) where severity is "hard" or "soft".
+        Returns (blocking_objective, severity, reason) where severity is "hard" or "soft".
         """
         # Path 1: Check activated norms
         for norm_args in self._facts.get_all("norm", 5):
@@ -351,7 +390,7 @@ class PythonGovernanceEngine:
                 continue
             if unify(action, n_obj) is not None:
                 severity = self._get_norm_severity(role, n_obj)
-                return n_obj, severity
+                return n_obj, severity, "active prohibition"
 
         # Path 2: Check conditional prohibitions directly
         for cond_args in self._facts.get_all("cond", 5):
@@ -374,9 +413,10 @@ class PythonGovernanceEngine:
             bound_cond = apply_subst(c_cond, subst)
             if self._evaluator.evaluate_bool(bound_cond, subst):
                 severity = self._get_norm_severity(role, c_obj)
-                return c_obj, severity
+                reason = _describe_condition(bound_cond, subst)
+                return c_obj, severity, reason
 
-        return None, "hard"
+        return None, "hard", ""
 
     def _get_norm_severity(self, role: str, objective: TermType) -> str:
         """Check if a blocking norm is soft (confirmation-required)."""
@@ -529,6 +569,10 @@ class PythonGovernanceEngine:
                         "objective": term_to_str(d_obj),
                     })
         return results
+
+    @staticmethod
+    def _describe_scope(scope_paths: list[str]) -> str:
+        return ", ".join(f"'{p}'" for p in scope_paths)
 
     @staticmethod
     def _list_to_terms(lst: TermType) -> list[TermType]:

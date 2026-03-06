@@ -27,14 +27,16 @@ class TestListTemplates:
 
 class TestRunInit:
 
-    def _make_args(self, template="safe-agent", scope="src/", agent="dev"):
+    def _make_args(self, template="safe-agent", scope=None, agent="dev"):
         class Args:
             pass
         a = Args()
         a.template = template
-        a.scope = scope
+        a.scope = scope or ["src/"]
         a.agent = agent
         a.list_templates = False
+        a.strict = False
+        a.with_dashboard = False
         return a
 
     def test_init_creates_org_spec(self, tmp_path, monkeypatch):
@@ -70,7 +72,7 @@ class TestRunInit:
         with pytest.raises(SystemExit):
             run(self._make_args(template="nonexistent"))
 
-    def test_init_merges_existing_settings(self, tmp_path, monkeypatch):
+    def test_init_preserves_non_hook_settings(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         settings_path = tmp_path / ".claude" / "settings.local.json"
         settings_path.parent.mkdir(parents=True)
@@ -79,5 +81,40 @@ class TestRunInit:
         run(self._make_args())
 
         data = json.loads(settings_path.read_text())
-        assert "permissions" in data  # existing key preserved
-        assert "hooks" in data  # new key added
+        assert "permissions" in data  # existing non-hook key preserved
+        assert "hooks" in data  # hooks key added
+
+    def test_init_replaces_stale_hooks(self, tmp_path, monkeypatch):
+        """Re-running init replaces hooks config (doesn't merge stale entries)."""
+        monkeypatch.chdir(tmp_path)
+
+        # First init with test-gate (has PostToolUse)
+        run(self._make_args(template="test-gate"))
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+        assert "PostToolUse" in data["hooks"]
+
+        # Second init with safe-agent (no PostToolUse)
+        run(self._make_args(template="safe-agent"))
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+        assert "PostToolUse" not in data["hooks"]  # stale entry removed
+
+    def test_init_multi_scope(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        run(self._make_args(scope=["src/", "tests/"]))
+        import yaml
+        spec = yaml.safe_load((tmp_path / ".aorta" / "safe-agent.yaml").read_text())
+        # Should have multi-scope forbidden_outside
+        outside_norms = [n for n in spec["norms"] if n["type"] == "forbidden_outside"]
+        assert len(outside_norms) == 1
+        assert outside_norms[0]["paths"] == ["src/", "tests/"]
+
+    def test_init_strict_hooks_read(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        args = self._make_args()
+        args.strict = True
+        run(args)
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+        matcher = data["hooks"]["PreToolUse"][0]["matcher"]
+        assert "Read" in matcher
+        assert "Glob" in matcher
+        assert "Grep" in matcher
