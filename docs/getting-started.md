@@ -55,10 +55,15 @@ norms:
     role: agent
     paths: [src/, tests/]
 
-  # Block writes to sensitive paths
+  # Protect sensitive files from both reading and writing
+  - type: protected
+    role: agent
+    paths: [".env", ".env.local", "secrets/"]
+
+  # Block writes to config (readable but not writable)
   - type: forbidden_paths
     role: agent
-    paths: [".env", "secrets/"]
+    paths: ["config/"]
 
   # Require tests before committing
   - type: required_before
@@ -107,6 +112,7 @@ hard-blocks writes to governance infrastructure regardless of your org spec.
 | Type | What it blocks | Key fields |
 |------|---------------|------------|
 | `scope` | `write_file` outside allowed directories | `paths` (list) |
+| `protected` | `read_file` AND `write_file` matching path prefixes | `paths` (list) |
 | `forbidden_paths` | `write_file` matching path prefixes | `paths` (list) |
 | `forbidden_command` | `execute_command` containing a substring | `command_pattern`, optional `severity` |
 | `required_before` | `execute_command` until an achievement exists | `command_pattern`, `requires` |
@@ -211,6 +217,37 @@ claude
 ```
 
 The hook reads `AORTA_AGENT` from the environment to identify which agent is making the call.
+
+## Re-initializing
+
+Running `aorta init` when aorta hooks already exist will exit with an error. Use `--reinit` to overwrite:
+
+```bash
+aorta init --template safe-agent --scope src/ tests/ --agent dev --reinit
+```
+
+Non-aorta hooks (e.g., your own linters) are always preserved — only aorta hooks are replaced.
+
+## One-time exceptions
+
+When a hook blocks an action, the block message includes an `allow-once` command hint. To grant a one-time exception:
+
+```bash
+aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env
+```
+
+The next access to `.env` will be approved; subsequent accesses are blocked again. Use `--agent dev` to restrict the exception to a specific agent.
+
+## Explain (debugging)
+
+To understand why an action is allowed or blocked:
+
+```bash
+aorta explain --org-spec .aorta/safe-agent.yaml \
+  --tool Write --path config/db.yml --agent dev --role agent --scope "src/"
+```
+
+Shows each norm, whether it applies, and why it matches or doesn't.
 
 ## Limitations
 

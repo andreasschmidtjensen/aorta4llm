@@ -656,6 +656,64 @@ class TestForbiddenCommand:
         assert result.severity == "soft"
 
 
+class TestProtectedNorm:
+    """Tests for protected norm type — blocks both reads and writes."""
+
+    def _make_hook(self, tmp_path, paths=None):
+        import yaml
+        spec_dict = {
+            "organization": "protected_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "protected",
+                "paths": paths or [".env", "secrets/"],
+            }],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+        return hook
+
+    def test_read_blocked(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        result = hook.pre_tool_use(
+            {"tool_name": "Read", "tool_input": {"file_path": ".env"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_write_blocked(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        result = hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": ".env"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_prefix_match(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        result = hook.pre_tool_use(
+            {"tool_name": "Read", "tool_input": {"file_path": "secrets/api_key.txt"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_non_protected_path_allowed(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        result = hook.pre_tool_use(
+            {"tool_name": "Read", "tool_input": {"file_path": "src/app.py"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+
 class TestBashAnalysisIntegration:
     """Tests for LLM-based Bash analysis in pre_tool_use."""
 

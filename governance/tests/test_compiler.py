@@ -152,6 +152,23 @@ class TestHighLevelNorms:
         })
         assert spec_with.facts == spec_without.facts
 
+    def test_protected_emits_read_and_write_cond(self):
+        spec = compile_spec_dict({
+            "norms": [{"role": "agent", "type": "protected", "paths": [".env"]}]
+        })
+        cond_facts = [f for f in spec.facts if f.startswith("cond(")]
+        assert len(cond_facts) == 2
+        assert any("read_file(Path)" in f for f in cond_facts)
+        assert any("write_file(Path)" in f for f in cond_facts)
+
+    def test_protected_multiple_paths(self):
+        spec = compile_spec_dict({
+            "norms": [{"role": "agent", "type": "protected", "paths": [".env", "secrets/"]}]
+        })
+        cond_facts = [f for f in spec.facts if f.startswith("cond(")]
+        # 2 facts per path (read + write)
+        assert len(cond_facts) == 4
+
     def test_forbidden_paths_emits_one_cond_per_path(self):
         spec = compile_spec_dict({
             "norms": [

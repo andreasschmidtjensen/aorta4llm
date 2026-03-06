@@ -55,6 +55,15 @@ class TestValidateSpec:
         assert not r.valid
         assert any("paths" in e for e in r.errors)
 
+    def test_protected_missing_paths(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "norms": [{"role": "agent", "type": "protected"}],
+        })
+        assert not r.valid
+        assert any("paths" in e for e in r.errors)
+
     def test_forbidden_paths_missing_paths(self):
         r = validate_spec({
             "organization": "test",

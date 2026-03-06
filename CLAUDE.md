@@ -19,7 +19,8 @@ uv run pytest -v
 - **governance/engine_types.py**: Data types (PermissionResult, NormChange, NotifyResult).
 - **governance/compiler.py**: YAML org specs → Prolog-syntax fact/rule strings (`CompiledSpec.facts`, no trailing `.`; `CompiledSpec.rules`, with trailing `.`).
 - **governance/service.py**: High-level API with agent registration and scope management.
-- **integration/hooks.py**: Claude Code hook integration — PreToolUse/PostToolUse handlers, CLI entry point, event-sourced state persistence, system prompt injection from obligations.
+- **integration/hooks.py**: Claude Code hook integration — PreToolUse/PostToolUse handlers, CLI entry point, event-sourced state persistence, allow-once exceptions, system prompt injection from obligations.
+- **cli/**: CLI commands — init, validate, dry-run, status, reset, allow-once, explain, hook.
 - **org-specs/**: YAML organizational specifications following the metamodel schema from DESIGN.md.
 - **examples/three_role_demo/demo.py**: Runnable three-role workflow simulation.
 
@@ -41,25 +42,24 @@ uv run pytest -v
 
 ## Claude Code Integration
 
-Configure hooks in `.claude/settings.local.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [{
-      "matcher": "Write|Edit|NotebookEdit|Bash",
-      "hooks": [{"type": "command", "command": "aorta hook pre-tool-use --org-spec org-specs/three_role_workflow.yaml --agent impl-1"}]
-    }]
-  }
-}
-```
-
-Register agents before starting:
+Quickstart:
 
 ```bash
-aorta hook register --org-spec org-specs/three_role_workflow.yaml \
+aorta init --template safe-agent --scope src/ --agent dev
+```
+
+This creates `.aorta/safe-agent.yaml` and `.claude/settings.local.json` with hooks configured. Re-run with `--reinit` to update existing hooks.
+
+For multi-agent setups, register agents manually:
+
+```bash
+aorta hook register --org-spec .aorta/review-gate.yaml \
     --agent impl-1 --role implementer --scope src/auth/
 ```
+
+Grant temporary exceptions: `aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env`
+
+Debug norm evaluation: `aorta explain --org-spec .aorta/safe-agent.yaml --tool Write --path config/x.py --agent dev --role agent`
 
 Run the demo: `uv run python examples/three_role_demo/demo.py`
 
