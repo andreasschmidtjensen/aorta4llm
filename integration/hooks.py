@@ -35,6 +35,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -82,21 +83,25 @@ class GovernanceHook:
         self._safe_commands = extras[2]
         self._events: list[dict] = []
         self._replaying = False
+        self._soft_block_cache: dict[str, float] = {}  # command_hash -> timestamp
+        self._soft_block_window = extras[3]
         self._replay_state()
 
-    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str]]:
-        """Load achievement_triggers, bash_analysis flag, and safe_commands from the org spec."""
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int]:
+        """Load achievement_triggers, bash_analysis flag, safe_commands, and soft_block_window."""
         try:
             with open(org_spec_path) as f:
                 spec = yaml.safe_load(f)
             safe_cmds = frozenset(spec.get("safe_commands", []))
+            window = int(spec.get("soft_block_window", 60))
             return (
                 spec.get("achievement_triggers", []),
                 bool(spec.get("bash_analysis", False)),
                 safe_cmds,
+                window,
             )
         except Exception:
-            return [], False, frozenset()
+            return [], False, frozenset(), 60
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state."""
@@ -194,9 +199,12 @@ class GovernanceHook:
         }
         if not result.permitted:
             event["reason"] = result.reason
+            event["severity"] = result.severity
         log_event(event, self._events_path)
 
         if not result.permitted:
+            if result.severity == "soft":
+                return self._handle_soft_block(result.reason, params)
             return {"decision": "block", "reason": result.reason}
 
         # Phase 2: LLM-based Bash command analysis.
@@ -320,6 +328,35 @@ class GovernanceHook:
                 lines.append(f"  - Delegate {d['objective']} to role: {d['to_role']}")
 
         return "\n".join(lines)
+
+    def _handle_soft_block(self, reason: str, params: dict) -> dict:
+        """Handle a soft (confirmation-required) block.
+
+        On first encounter: block with a message inviting retry.
+        On retry within the time window: approve (user confirmed).
+        """
+        cache_key = self._soft_block_key(params)
+        now = time.time()
+
+        # Check if this is a retry of a recently soft-blocked command.
+        prev = self._soft_block_cache.get(cache_key)
+        if prev is not None and (now - prev) < self._soft_block_window:
+            del self._soft_block_cache[cache_key]
+            return {"decision": "approve"}
+
+        # First time — block and cache for retry.
+        self._soft_block_cache[cache_key] = now
+        return {
+            "decision": "block",
+            "reason": f"⚠ CONFIRMATION REQUIRED: {reason}\n"
+                      f"If the user explicitly approves, retry this action.",
+        }
+
+    @staticmethod
+    def _soft_block_key(params: dict) -> str:
+        """Generate a cache key for soft block deduplication."""
+        raw = params.get("command", "") or params.get("path", "")
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def _get_agent_role(self, agent: str) -> str | None:
         """Look up the role for a registered agent."""

@@ -79,6 +79,8 @@ def _compile_norms(norms: list, spec: CompiledSpec) -> None:
             _compile_forbidden_paths(norm, spec)
         elif norm_type == "required_before":
             _compile_required_before(norm, spec)
+        elif norm_type == "forbidden_command":
+            _compile_forbidden_command(norm, spec)
         else:
             # Raw syntax: obliged / forbidden with explicit objective + condition
             role = norm["role"]
@@ -89,6 +91,13 @@ def _compile_norms(norms: list, spec: CompiledSpec) -> None:
             spec.facts.append(
                 f"cond({role}, {deon}, {objective}, {deadline}, {condition})"
             )
+
+        # Any norm type can have severity: soft
+        if norm.get("severity") == "soft" and norm_type not in ("forbidden_command",):
+            role = norm.get("role", "")
+            objective = norm.get("objective", "")
+            if role and objective:
+                spec.facts.append(f"soft_norm({role}, {objective})")
 
 
 def _compile_forbidden_outside(norm: dict, spec: CompiledSpec) -> None:
@@ -159,6 +168,25 @@ def _compile_required_before(norm: dict, spec: CompiledSpec) -> None:
     spec.rules.append(
         f"{helper}(Cmd) :- atom_concat(_, {quoted}, Cmd)."
     )
+
+
+def _compile_forbidden_command(norm: dict, spec: CompiledSpec) -> None:
+    """Compile forbidden_command shorthand.
+
+    Forbids execute_command(Cmd) when the command contains `command_pattern`
+    as a substring. Uses str_contains/2 for matching.
+    Supports severity: soft for confirmation-required blocks.
+    """
+    role = norm["role"]
+    command_pattern = norm["command_pattern"]
+    quoted = f"'{command_pattern}'"
+
+    spec.facts.append(
+        f"cond({role}, forbidden, execute_command(Cmd), false, str_contains(Cmd, {quoted}))"
+    )
+
+    if norm.get("severity") == "soft":
+        spec.facts.append(f"soft_norm({role}, execute_command(Cmd))")
 
 
 def _ensure_in_scope_rule(spec: CompiledSpec) -> None:

@@ -10,6 +10,7 @@ class PermissionResult:
     permitted: bool
     reason: str
     violation: str | None = None
+    severity: str = "hard"  # "hard" (default) or "soft" (confirmation-required)
 
 
 @dataclass

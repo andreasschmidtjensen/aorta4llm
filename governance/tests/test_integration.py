@@ -498,6 +498,162 @@ class TestSystemPromptInjection:
         assert text is None
 
 
+class TestForbiddenCommand:
+    """Tests for forbidden_command norm type and soft blocks."""
+
+    def _make_hook(self, tmp_path, norms, severity=None):
+        import yaml
+        for norm in norms:
+            if severity and "severity" not in norm:
+                norm["severity"] = severity
+        spec_dict = {
+            "organization": "cmd_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": norms,
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+        return hook
+
+    def test_forbidden_command_blocks_matching_command(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "type": "forbidden_command",
+            "role": "agent",
+            "command_pattern": "git commit",
+        }])
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_forbidden_command_allows_non_matching(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "type": "forbidden_command",
+            "role": "agent",
+            "command_pattern": "git commit",
+        }])
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git status"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+    def test_forbidden_command_blocks_substring_match(self, tmp_path):
+        """Pattern matches anywhere in command, not just prefix."""
+        hook = self._make_hook(tmp_path, [{
+            "type": "forbidden_command",
+            "role": "agent",
+            "command_pattern": "git push",
+        }])
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "cd repo && git push origin main"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_soft_block_first_attempt_blocks(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "type": "forbidden_command",
+            "role": "agent",
+            "command_pattern": "git commit",
+            "severity": "soft",
+        }])
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "CONFIRMATION REQUIRED" in result["reason"]
+
+    def test_soft_block_retry_approves(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "type": "forbidden_command",
+            "role": "agent",
+            "command_pattern": "git commit",
+            "severity": "soft",
+        }])
+        cmd = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}}
+
+        # First attempt — blocked
+        r1 = hook.pre_tool_use(cmd, agent="dev")
+        assert r1["decision"] == "block"
+
+        # Retry — approved (user confirmed)
+        r2 = hook.pre_tool_use(cmd, agent="dev")
+        assert r2["decision"] == "approve"
+
+    def test_soft_block_retry_window_expires(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "type": "forbidden_command",
+            "role": "agent",
+            "command_pattern": "git commit",
+            "severity": "soft",
+        }])
+        cmd = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}}
+
+        # First attempt — blocked
+        hook.pre_tool_use(cmd, agent="dev")
+
+        # Simulate window expiry
+        key = hook._soft_block_key({"command": "git commit -m 'x'"})
+        hook._soft_block_cache[key] -= 120  # push timestamp back
+
+        # Retry after window — blocked again
+        r2 = hook.pre_tool_use(cmd, agent="dev")
+        assert r2["decision"] == "block"
+
+    def test_hard_block_does_not_approve_on_retry(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "type": "forbidden_command",
+            "role": "agent",
+            "command_pattern": "git commit",
+        }])
+        cmd = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}}
+
+        r1 = hook.pre_tool_use(cmd, agent="dev")
+        assert r1["decision"] == "block"
+        assert "CONFIRMATION" not in r1.get("reason", "")
+
+        r2 = hook.pre_tool_use(cmd, agent="dev")
+        assert r2["decision"] == "block"
+
+    def test_severity_propagated_to_permission_result(self, tmp_path):
+        """The engine returns severity='soft' for soft-norm prohibitions."""
+        import yaml
+        spec_dict = {
+            "organization": "sev_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "type": "forbidden_command",
+                "role": "agent",
+                "command_pattern": "git push",
+                "severity": "soft",
+            }],
+        }
+        from governance.service import GovernanceService
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        svc = GovernanceService(spec_file)
+        svc.register_agent("dev", "agent")
+        result = svc.check_permission("dev", "agent", "execute_command",
+                                       {"command": "git push origin main"})
+        assert not result.permitted
+        assert result.severity == "soft"
+
+
 class TestBashAnalysisIntegration:
     """Tests for LLM-based Bash analysis in pre_tool_use."""
 

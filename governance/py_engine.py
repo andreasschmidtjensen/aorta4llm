@@ -22,7 +22,7 @@ class PythonGovernanceEngine:
     _DYNAMIC_PREDICATES = [
         ("role", 2), ("obj", 2), ("dep", 3), ("cap", 2), ("cond", 5),
         ("rea", 2), ("norm", 5), ("viol", 4), ("achieved", 1),
-        ("deadline_reached", 1), ("current_scope", 1),
+        ("deadline_reached", 1), ("current_scope", 1), ("soft_norm", 2),
     ]
 
     def __init__(self):
@@ -123,13 +123,14 @@ class PythonGovernanceEngine:
             else:
                 action_term = Term(action, (Atom(params.get("path", "")),))
 
-            blocked_obj = self._check_action_blocked(agent, role, action_term)
+            blocked_obj, severity = self._check_action_blocked(agent, role, action_term)
             if blocked_obj is not None:
                 action_str = term_to_str(action_term)
                 return PermissionResult(
                     permitted=False,
                     reason=f"prohibition active: {action_str} blocked for {agent} in role {role}",
                     violation=f"viol('{agent}', {role}, forbidden, {action_str})",
+                    severity=severity,
                 )
 
             action_str = term_to_str(action_term)
@@ -328,12 +329,16 @@ class PythonGovernanceEngine:
 
     # --- Permission checking ---
 
-    def _check_action_blocked(self, agent: str, role: str, action: Term) -> TermType | None:
+    def _check_action_blocked(
+        self, agent: str, role: str, action: Term,
+    ) -> tuple[TermType | None, str]:
         """Check if an action is blocked by any prohibition.
 
         Two paths (matching nc.pl's two check_action_blocked clauses):
         1. Check activated norm/5 facts with forbidden deontic
         2. Check cond/5 facts directly — unify action with objective to bind variables
+
+        Returns (blocking_objective, severity) where severity is "hard" or "soft".
         """
         # Path 1: Check activated norms
         for norm_args in self._facts.get_all("norm", 5):
@@ -345,7 +350,8 @@ class PythonGovernanceEngine:
             if not (isinstance(n_deon, Atom) and n_deon.value == "forbidden"):
                 continue
             if unify(action, n_obj) is not None:
-                return n_obj
+                severity = self._get_norm_severity(role, n_obj)
+                return n_obj, severity
 
         # Path 2: Check conditional prohibitions directly
         for cond_args in self._facts.get_all("cond", 5):
@@ -367,9 +373,20 @@ class PythonGovernanceEngine:
             # Evaluate condition with bound variables
             bound_cond = apply_subst(c_cond, subst)
             if self._evaluator.evaluate_bool(bound_cond, subst):
-                return c_obj
+                severity = self._get_norm_severity(role, c_obj)
+                return c_obj, severity
 
-        return None
+        return None, "hard"
+
+    def _get_norm_severity(self, role: str, objective: TermType) -> str:
+        """Check if a blocking norm is soft (confirmation-required)."""
+        for soft_args in self._facts.get_all("soft_norm", 2):
+            s_role, s_obj = soft_args
+            if not (isinstance(s_role, Atom) and s_role.value == role):
+                continue
+            if unify(objective, s_obj) is not None:
+                return "soft"
+        return "hard"
 
     # --- Norm/violation snapshots ---
 

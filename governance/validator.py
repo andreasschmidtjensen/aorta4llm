@@ -7,8 +7,10 @@ import yaml
 
 VALID_NORM_TYPES = frozenset([
     "forbidden_outside", "forbidden_paths", "required_before",
-    "obliged", "forbidden",
+    "forbidden_command", "obliged", "forbidden",
 ])
+
+VALID_SEVERITIES = frozenset(["hard", "soft"])
 
 VALID_CAPABILITIES = frozenset([
     "read_file", "write_file", "execute_command", "spawn_agent",
@@ -80,6 +82,12 @@ def validate_spec(spec_dict: dict) -> ValidationResult:
             result.errors.append(f"{label}: forbidden_paths requires 'paths'")
         if norm_type == "required_before" and "requires" not in norm:
             result.errors.append(f"{label}: required_before requires 'requires'")
+        if norm_type == "forbidden_command" and "command_pattern" not in norm:
+            result.errors.append(f"{label}: forbidden_command requires 'command_pattern'")
+
+        severity = norm.get("severity")
+        if severity and severity not in VALID_SEVERITIES:
+            result.errors.append(f"{label}: unrecognized severity '{severity}'")
 
         result.summary.append(f"{label}: {norm_type or '?'} on role '{role or '?'}'")
 

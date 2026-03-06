@@ -182,6 +182,10 @@ class ConditionEvaluator:
         if term.functor == "atom_concat" and len(term.args) == 3:
             return self._eval_atom_concat(term.args[0], term.args[1], term.args[2], subst)
 
+        # str_contains(Haystack, Needle)
+        if term.functor == "str_contains" and len(term.args) == 2:
+            return self._eval_str_contains(term.args[0], term.args[1], subst)
+
         # member(X, List)
         if term.functor == "member" and len(term.args) == 2:
             return self._eval_member(term.args[0], term.args[1], subst)
@@ -256,6 +260,18 @@ class ConditionEvaluator:
 
         # Can't evaluate — insufficient binding
         raise _EvalError("atom_concat: insufficient bindings")
+
+    def _eval_str_contains(
+        self, haystack: TermType, needle: TermType, subst: Substitution
+    ) -> list[Substitution]:
+        """Evaluate str_contains/2 — substring check."""
+        haystack = apply_subst(haystack, subst)
+        needle = apply_subst(needle, subst)
+        if isinstance(haystack, Atom) and isinstance(needle, Atom):
+            if needle.value in haystack.value:
+                return [subst]
+            return []
+        raise _EvalError("str_contains: requires two ground atoms")
 
     def _eval_member(self, elem: TermType, lst: TermType, subst: Substitution) -> list[Substitution]:
         """Evaluate member/2 — check list membership."""
