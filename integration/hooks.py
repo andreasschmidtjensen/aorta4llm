@@ -138,6 +138,7 @@ class GovernanceHook:
         self._events: list[dict] = []
         self._replaying = False
         self._soft_block_cache: dict[str, float] = {}  # command_hash -> timestamp
+        self._exceptions: list[dict] = []
         self._soft_block_window = extras[3]
         self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
@@ -166,6 +167,7 @@ class GovernanceHook:
         state = json.loads(self._state_path.read_text())
         self._events = state.get("events", [])
         self._soft_block_cache = state.get("soft_blocks", {})
+        self._exceptions = state.get("exceptions", [])
         for event in self._events:
             etype = event["type"]
             if etype == "register":
@@ -185,12 +187,15 @@ class GovernanceHook:
         self._replaying = False
 
     def _save_state(self):
-        """Persist events and soft block timestamps to state file."""
+        """Persist events, soft block timestamps, and exceptions to state file."""
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._state_path.write_text(json.dumps({
+        state: dict = {
             "events": self._events,
             "soft_blocks": self._soft_block_cache,
-        }, indent=2))
+        }
+        if self._exceptions:
+            state["exceptions"] = self._exceptions
+        self._state_path.write_text(json.dumps(state, indent=2))
 
     def register_agent(self, agent: str, role: str, scope: str = ""):
         """Register an agent with a role and scope, persisting the event."""
@@ -278,6 +283,16 @@ class GovernanceHook:
                 })
                 return {"decision": "block", "reason": reason}
 
+        # Check for allow-once exceptions before norm evaluation.
+        path = params.get("path", "")
+        if path and self._check_exception(path, agent_id):
+            self._log({
+                "type": "check", "agent": agent_id, "role": role,
+                "action": action, "path": path,
+                "decision": "approve", "reason": "allow-once exception",
+            })
+            return {"decision": "approve"}
+
         result = self._service.check_permission(agent_id, role, action, params)
 
         decision = "approve" if result.permitted else "block"
@@ -294,7 +309,11 @@ class GovernanceHook:
         if not result.permitted:
             if result.severity == "soft":
                 return self._handle_soft_block(result.reason, params)
-            return {"decision": "block", "reason": result.reason}
+            reason = result.reason
+            if path:
+                spec_rel = str(self._org_spec_path)
+                reason += f"\n  To grant a one-time exception: aorta allow-once --org-spec {spec_rel} --path {path}"
+            return {"decision": "block", "reason": reason}
 
         # Phase 2: LLM-based Bash command analysis.
         if tool_name == "Bash" and self._bash_analysis and params.get("command"):
@@ -414,6 +433,25 @@ class GovernanceHook:
                 lines.append(f"  - Delegate {d['objective']} to role: {d['to_role']}")
 
         return "\n".join(lines)
+
+    def _check_exception(self, path: str, agent: str) -> bool:
+        """Check if an allow-once exception exists for this path+agent.
+
+        If found, decrements uses and removes when exhausted. Returns True if allowed.
+        """
+        for exc in self._exceptions:
+            if exc["path"] != path:
+                # Check if path starts with exception path (prefix match)
+                if not path.startswith(exc["path"]):
+                    continue
+            if exc["agent"] != "*" and exc["agent"] != agent:
+                continue
+            exc["uses"] -= 1
+            if exc["uses"] <= 0:
+                self._exceptions.remove(exc)
+            self._save_state()
+            return True
+        return False
 
     def _handle_soft_block(self, reason: str, params: dict) -> dict:
         """Handle a soft (confirmation-required) block.

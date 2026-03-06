@@ -17,6 +17,8 @@ def main():
     from cli.cmd_hook import add_parser as add_hook
     from cli.cmd_status import add_parser as add_status
     from cli.cmd_reset import add_parser as add_reset
+    from cli.cmd_allow_once import add_parser as add_allow_once
+    from cli.cmd_explain import add_parser as add_explain
 
     add_validate(sub)
     add_dry_run(sub)
@@ -24,6 +26,8 @@ def main():
     add_hook(sub)
     add_status(sub)
     add_reset(sub)
+    add_allow_once(sub)
+    add_explain(sub)
 
     args = parser.parse_args()
     if not args.command:

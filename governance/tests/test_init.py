@@ -36,6 +36,7 @@ class TestRunInit:
         a.agent = agent
         a.list_templates = False
         a.strict = False
+        a.reinit = False
         a.with_dashboard = False
         return a
 
@@ -83,7 +84,7 @@ class TestRunInit:
         assert "hooks" in data  # hooks key added
 
     def test_init_replaces_stale_hooks(self, tmp_path, monkeypatch):
-        """Re-running init replaces hooks config (doesn't merge stale entries)."""
+        """Re-running init with --reinit replaces hooks (doesn't merge stale entries)."""
         monkeypatch.chdir(tmp_path)
 
         # First init with test-gate (has PostToolUse)
@@ -91,8 +92,10 @@ class TestRunInit:
         data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
         assert "PostToolUse" in data["hooks"]
 
-        # Second init with safe-agent (no PostToolUse)
-        run(self._make_args(template="safe-agent"))
+        # Second init with safe-agent (no PostToolUse) — needs --reinit
+        args = self._make_args(template="safe-agent")
+        args.reinit = True
+        run(args)
         data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
         assert "PostToolUse" not in data["hooks"]  # stale entry removed
 
@@ -105,6 +108,62 @@ class TestRunInit:
         scope_norms = [n for n in spec["norms"] if n["type"] == "scope"]
         assert len(scope_norms) == 1
         assert scope_norms[0]["paths"] == ["src/", "tests/"]
+
+    def test_init_blocks_without_reinit(self, tmp_path, monkeypatch):
+        """Re-running init without --reinit exits with error."""
+        monkeypatch.chdir(tmp_path)
+        run(self._make_args())
+
+        with pytest.raises(SystemExit):
+            run(self._make_args())
+
+    def test_init_preserves_non_aorta_hooks(self, tmp_path, monkeypatch):
+        """Non-aorta hooks are preserved when init writes aorta hooks."""
+        monkeypatch.chdir(tmp_path)
+        settings_path = tmp_path / ".claude" / "settings.local.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_text(json.dumps({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "my-linter"}],
+                }]
+            }
+        }) + "\n")
+
+        run(self._make_args())
+
+        data = json.loads(settings_path.read_text())
+        pre_hooks = data["hooks"]["PreToolUse"]
+        # Should have both: user's linter AND aorta hook
+        commands = [h["command"] for entry in pre_hooks for h in entry.get("hooks", [])]
+        assert "my-linter" in commands
+        assert any("aorta hook" in c for c in commands)
+
+    def test_init_reinit_preserves_non_aorta_hooks(self, tmp_path, monkeypatch):
+        """--reinit replaces aorta hooks but keeps non-aorta hooks."""
+        monkeypatch.chdir(tmp_path)
+        run(self._make_args())
+
+        # Add a non-aorta hook manually
+        settings_path = tmp_path / ".claude" / "settings.local.json"
+        data = json.loads(settings_path.read_text())
+        data["hooks"]["PreToolUse"].append({
+            "matcher": "Bash",
+            "hooks": [{"type": "command", "command": "my-linter"}],
+        })
+        settings_path.write_text(json.dumps(data, indent=2) + "\n")
+
+        # Reinit should keep the linter hook
+        args = self._make_args()
+        args.reinit = True
+        run(args)
+
+        data = json.loads(settings_path.read_text())
+        commands = [h["command"] for entry in data["hooks"]["PreToolUse"]
+                    for h in entry.get("hooks", [])]
+        assert "my-linter" in commands
+        assert any("aorta hook" in c for c in commands)
 
     def test_init_strict_hooks_read(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
