@@ -32,7 +32,7 @@ class TestValidateSpec:
         r = validate_spec({
             "organization": "test",
             "roles": {"agent": {"objectives": [], "capabilities": []}},
-            "norms": [{"role": "ghost", "type": "forbidden_outside", "path": "src/"}],
+            "norms": [{"role": "ghost", "type": "scope", "paths": ["src/"]}],
         })
         assert not r.valid
         assert any("ghost" in e for e in r.errors)
@@ -46,14 +46,14 @@ class TestValidateSpec:
         assert not r.valid
         assert any("banana" in e for e in r.errors)
 
-    def test_forbidden_outside_missing_path(self):
+    def test_scope_missing_paths(self):
         r = validate_spec({
             "organization": "test",
             "roles": {"agent": {"objectives": [], "capabilities": []}},
-            "norms": [{"role": "agent", "type": "forbidden_outside"}],
+            "norms": [{"role": "agent", "type": "scope"}],
         })
         assert not r.valid
-        assert any("path" in e for e in r.errors)
+        assert any("paths" in e for e in r.errors)
 
     def test_forbidden_paths_missing_paths(self):
         r = validate_spec({
@@ -94,10 +94,10 @@ class TestValidateSpec:
         r = validate_spec({
             "organization": "test",
             "roles": {"agent": {"objectives": ["x"], "capabilities": ["read_file"]}},
-            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src/"}],
+            "norms": [{"role": "agent", "type": "scope", "paths": ["src/"]}],
         })
         assert any("agent" in s for s in r.summary)
-        assert any("forbidden_outside" in s for s in r.summary)
+        assert any("scope" in s for s in r.summary)
 
 
 class TestValidateSpecFile:

@@ -93,9 +93,10 @@ def run(args):
             role = norm.get("role", "?")
             ntype = norm.get("type", "?")
             detail = ""
-            if ntype == "forbidden_outside":
-                paths = norm.get("paths", [norm["path"]]) if "path" in norm else norm.get("paths", [])
-                detail = f" — scope: {', '.join(paths)}"
+            if ntype == "scope":
+                detail = f" — scope: {', '.join(norm.get('paths', []))}"
+            elif ntype == "protected":
+                detail = f" — {', '.join(norm.get('paths', []))}"
             elif ntype == "forbidden_paths":
                 detail = f" — {', '.join(norm.get('paths', []))}"
             elif ntype == "forbidden_command":

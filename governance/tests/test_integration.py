@@ -671,8 +671,8 @@ class TestBashAnalysisIntegration:
             },
             "norms": norms or [{
                 "role": "agent",
-                "type": "forbidden_outside",
-                "path": "src/",
+                "type": "scope",
+                "paths": ["src/"],
             }],
         }
         if bash_analysis:

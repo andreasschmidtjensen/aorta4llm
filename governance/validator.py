@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 VALID_NORM_TYPES = frozenset([
-    "forbidden_outside", "forbidden_paths", "required_before",
+    "scope", "protected", "forbidden_paths", "required_before",
     "forbidden_command", "obliged", "forbidden",
 ])
 
@@ -76,8 +76,10 @@ def validate_spec(spec_dict: dict) -> ValidationResult:
             result.errors.append(f"{label}: unrecognized type '{norm_type}'")
 
         # Type-specific required fields.
-        if norm_type == "forbidden_outside" and "path" not in norm and "paths" not in norm:
-            result.errors.append(f"{label}: forbidden_outside requires 'path' or 'paths'")
+        if norm_type == "scope" and "paths" not in norm:
+            result.errors.append(f"{label}: scope requires 'paths'")
+        if norm_type == "protected" and "paths" not in norm:
+            result.errors.append(f"{label}: protected requires 'paths'")
         if norm_type == "forbidden_paths" and "paths" not in norm:
             result.errors.append(f"{label}: forbidden_paths requires 'paths'")
         if norm_type == "required_before" and "requires" not in norm:

@@ -103,10 +103,10 @@ class TestRunInit:
         run(self._make_args(scope=["src/", "tests/"]))
         import yaml
         spec = yaml.safe_load((tmp_path / ".aorta" / "safe-agent.yaml").read_text())
-        # Should have multi-scope forbidden_outside
-        outside_norms = [n for n in spec["norms"] if n["type"] == "forbidden_outside"]
-        assert len(outside_norms) == 1
-        assert outside_norms[0]["paths"] == ["src/", "tests/"]
+        # Should have multi-scope scope norm
+        scope_norms = [n for n in spec["norms"] if n["type"] == "scope"]
+        assert len(scope_norms) == 1
+        assert scope_norms[0]["paths"] == ["src/", "tests/"]
 
     def test_init_strict_hooks_read(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

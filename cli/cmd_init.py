@@ -67,16 +67,11 @@ def run(args):
     org_spec_dest = Path(f".aorta/{args.template}.yaml")
     org_spec_dest.parent.mkdir(parents=True, exist_ok=True)
 
-    # 2. Update forbidden_outside norms to match --scope.
-    # With multi-scope, replace single forbidden_outside with one per scope
-    # using forbidden_outside_multi type, or replace the path list.
+    # 2. Update scope norms to match --scope.
     new_norms = []
     for norm in spec.get("norms", []):
-        if norm.get("type") == "forbidden_outside":
-            if len(scopes) == 1:
-                norm["path"] = scopes[0]
-            else:
-                norm["paths"] = scopes
+        if norm.get("type") == "scope":
+            norm["paths"] = scopes
             new_norms.append(norm)
         else:
             new_norms.append(norm)
@@ -104,9 +99,10 @@ def run(args):
     pre_cmd = f"aorta hook pre-tool-use --org-spec {spec_rel} --agent {args.agent} --events-path {events_rel}"
     post_cmd = f"aorta hook post-tool-use --org-spec {spec_rel} --agent {args.agent} --events-path {events_rel}"
 
-    # Write tools matcher — add Read/Glob/Grep if --strict
+    # Write tools matcher — add Read/Glob/Grep if --strict or protected norms exist
+    has_protected = any(n.get("type") == "protected" for n in spec.get("norms", []))
     write_matcher = "Write|Edit|NotebookEdit|Bash"
-    if args.strict:
+    if args.strict or has_protected:
         write_matcher = "Write|Edit|NotebookEdit|Bash|Read|Glob|Grep"
 
     hooks_config: dict = {

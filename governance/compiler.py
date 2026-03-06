@@ -66,19 +66,21 @@ def _compile_norms(norms: list, spec: CompiledSpec) -> None:
     """Compile conditional norms to cond/5 facts.
 
     Handles both raw Prolog-syntax norms and high-level shorthand types:
-    - forbidden_outside: forbid writes outside a given directory prefix
+    - scope: forbid writes outside a given directory prefix
     - forbidden_paths: forbid writes matching any of a list of path prefixes
     - required_before: block a command until an achievement exists
     """
     for norm in norms:
         norm_type = norm["type"]
 
-        if norm_type == "forbidden_outside":
-            _compile_forbidden_outside(norm, spec)
+        if norm_type == "scope":
+            _compile_scope(norm, spec)
         elif norm_type == "forbidden_paths":
             _compile_forbidden_paths(norm, spec)
         elif norm_type == "required_before":
             _compile_required_before(norm, spec)
+        elif norm_type == "protected":
+            _compile_protected(norm, spec)
         elif norm_type == "forbidden_command":
             _compile_forbidden_command(norm, spec)
         else:
@@ -100,19 +102,13 @@ def _compile_norms(norms: list, spec: CompiledSpec) -> None:
                 spec.facts.append(f"soft_norm({role}, {objective})")
 
 
-def _compile_forbidden_outside(norm: dict, spec: CompiledSpec) -> None:
-    """Compile forbidden_outside shorthand.
+def _compile_scope(norm: dict, spec: CompiledSpec) -> None:
+    """Compile scope shorthand.
 
     Forbids write_file(Path) for any Path not inside one of the allowed scopes.
-    Supports single `path` or multi-scope `paths` list.
     """
     role = norm["role"]
-
-    # Support both single path and multi-scope paths list
-    if "paths" in norm:
-        scope_paths = [p.rstrip("/") + "/" for p in norm["paths"]]
-    else:
-        scope_paths = [norm["path"].rstrip("/") + "/"]
+    scope_paths = [p.rstrip("/") + "/" for p in norm["paths"]]
 
     if len(scope_paths) == 1:
         quoted = f"'{scope_paths[0]}'"
@@ -151,6 +147,25 @@ def _compile_forbidden_paths(norm: dict, spec: CompiledSpec) -> None:
         else:
             quoted = f"'{prefix}'"
             condition = f"atom_concat({quoted}, _, Path)"
+        spec.facts.append(
+            f"cond({role}, forbidden, write_file(Path), false, {condition})"
+        )
+
+
+def _compile_protected(norm: dict, spec: CompiledSpec) -> None:
+    """Compile protected shorthand.
+
+    Forbids both read_file(Path) and write_file(Path) for paths matching
+    any of the listed prefixes. Emits two cond/5 facts per path.
+    """
+    role = norm["role"]
+    for p in norm["paths"]:
+        prefix = p.rstrip("/")
+        quoted = f"'{prefix}'"
+        condition = f"atom_concat({quoted}, _, Path)"
+        spec.facts.append(
+            f"cond({role}, forbidden, read_file(Path), false, {condition})"
+        )
         spec.facts.append(
             f"cond({role}, forbidden, write_file(Path), false, {condition})"
         )

@@ -15,7 +15,7 @@ aorta init --template safe-agent --scope src/ --agent dev
 ```
 
 This creates:
-- `.aorta/safe-agent.yaml` — the org spec (governance rules), with `forbidden_outside` path set to your `--scope`
+- `.aorta/safe-agent.yaml` — the org spec (governance rules), with `scope` paths set to your `--scope`
 - `.claude/settings.local.json` — Claude Code hook configuration
 - `.aorta/events.jsonl` — event log (project-local)
 - Registers agent `dev` with scope `src/`
@@ -51,7 +51,7 @@ roles:
 
 norms:
   # Keep writes inside src/ and tests/
-  - type: forbidden_outside
+  - type: scope
     role: agent
     paths: [src/, tests/]
 
@@ -106,7 +106,7 @@ hard-blocks writes to governance infrastructure regardless of your org spec.
 
 | Type | What it blocks | Key fields |
 |------|---------------|------------|
-| `forbidden_outside` | `write_file` outside allowed directories | `path` or `paths` (list) |
+| `scope` | `write_file` outside allowed directories | `paths` (list) |
 | `forbidden_paths` | `write_file` matching path prefixes | `paths` (list) |
 | `forbidden_command` | `execute_command` containing a substring | `command_pattern`, optional `severity` |
 | `required_before` | `execute_command` until an achievement exists | `command_pattern`, `requires` |

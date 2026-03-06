@@ -60,6 +60,18 @@ TOOL_ACTION_MAP = {
 }
 
 
+# Patterns that indicate a governance command (agents must never run these).
+_GOVERNANCE_CMD_PATTERNS = re.compile(
+    r"(?:^|\s|&&|\|\||;)"  # start of string or command separator
+    r"(?:aorta\s|python\s+-m\s+(?:cli|integration\.hooks)\s)",
+)
+
+
+def _is_governance_command(cmd: str) -> bool:
+    """Check if a bash command invokes aorta governance tools."""
+    return bool(_GOVERNANCE_CMD_PATTERNS.search(cmd))
+
+
 def _default_state_path(org_spec_path: str | Path) -> Path:
     """Return ~/.aorta/state-<hash>.json keyed to the org spec's absolute path."""
     digest = hashlib.sha256(str(Path(org_spec_path).resolve()).encode()).hexdigest()[:12]
@@ -233,6 +245,18 @@ class GovernanceHook:
                         "decision": "block", "reason": reason, "severity": "hard",
                     })
                     return {"decision": "block", "reason": reason}
+
+        # Hard-block agents from running governance commands.
+        if action == "execute_command" and params.get("command"):
+            cmd = params["command"]
+            if _is_governance_command(cmd):
+                reason = "agents cannot run governance commands"
+                self._log({
+                    "type": "check", "agent": agent_id, "role": role,
+                    "action": action, "path": "",
+                    "decision": "block", "reason": reason, "severity": "hard",
+                })
+                return {"decision": "block", "reason": reason}
 
         result = self._service.check_permission(agent_id, role, action, params)
 

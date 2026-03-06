@@ -4,20 +4,7 @@
 # defined scope but be physically blocked from touching sensitive files.
 #
 # Usage:
-#   Register the agent before starting:
-#     uv run python -m integration.hooks register \
-#         --org-spec org-specs/templates/safe-agent.yaml \
-#         --agent my-agent --role agent --scope src/
-#
-#   Configure hooks in .claude/settings.local.json:
-#     {
-#       "hooks": {
-#         "PreToolUse": [{
-#           "matcher": "Write|Edit|NotebookEdit|Bash",
-#           "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/templates/safe-agent.yaml --agent my-agent"
-#         }]
-#       }
-#     }
+#   aorta init --template safe-agent --scope src/ --agent dev
 
 organization: safe_agent
 bash_analysis: true
@@ -35,8 +22,9 @@ norms:
   # Block writes outside the assigned scope (set at registration time).
   # Change 'src/' to the directory you want the agent to work in.
   - role: agent
-    type: forbidden_outside
-    path: src/
+    type: scope
+    paths:
+      - src/
 
   # Block writes to configuration and secrets.
   # Add more paths as needed.
@@ -48,6 +36,17 @@ norms:
       - config/
       - secrets/
       - .ssh/
+
+  # Soft-block git commit/push (agent must confirm with user).
+  - role: agent
+    type: forbidden_command
+    command_pattern: "git commit"
+    severity: soft
+
+  - role: agent
+    type: forbidden_command
+    command_pattern: "git push"
+    severity: soft
 
 workflow:
   - agent: my-agent

@@ -5,24 +5,7 @@
 # hook detects test success automatically and unlocks the gate.
 #
 # Usage:
-#   Register the agent:
-#     uv run python -m integration.hooks register \
-#         --org-spec org-specs/templates/test-gate.yaml \
-#         --agent dev --role agent
-#
-#   Configure hooks in .claude/settings.local.json:
-#     {
-#       "hooks": {
-#         "PreToolUse": [{
-#           "matcher": "Write|Edit|NotebookEdit|Bash",
-#           "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/templates/test-gate.yaml --agent dev"
-#         }],
-#         "PostToolUse": [{
-#           "matcher": "Bash",
-#           "command": "uv run python -m integration.hooks post-tool-use --org-spec org-specs/templates/test-gate.yaml --agent dev"
-#         }]
-#       }
-#     }
+#   aorta init --template test-gate --scope src/ --agent dev
 
 organization: test_gate
 bash_analysis: true

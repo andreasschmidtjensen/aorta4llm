@@ -118,37 +118,37 @@ class TestCompileEmpty:
 
 
 class TestHighLevelNorms:
-    def test_forbidden_outside_emits_cond_fact(self):
+    def test_scope_emits_cond_fact(self):
         spec = compile_spec_dict({
-            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src/"}]
+            "norms": [{"role": "agent", "type": "scope", "paths": ["src/"]}]
         })
         assert any(
             "cond(agent, forbidden, write_file(Path), false, not(in_scope(Path, 'src/')))" in f
             for f in spec.facts
         )
 
-    def test_forbidden_outside_adds_in_scope_rule(self):
+    def test_scope_adds_in_scope_rule(self):
         spec = compile_spec_dict({
-            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src/"}]
+            "norms": [{"role": "agent", "type": "scope", "paths": ["src/"]}]
         })
         assert "in_scope(Path, Scope) :- atom_concat(Scope, _, Path)." in spec.rules
 
-    def test_forbidden_outside_deduplicates_in_scope_rule(self):
+    def test_scope_deduplicates_in_scope_rule(self):
         spec = compile_spec_dict({
             "norms": [
-                {"role": "agent", "type": "forbidden_outside", "path": "src/"},
-                {"role": "agent", "type": "forbidden_outside", "path": "lib/"},
+                {"role": "agent", "type": "scope", "paths": ["src/"]},
+                {"role": "agent", "type": "scope", "paths": ["lib/"]},
             ]
         })
         in_scope_rules = [r for r in spec.rules if r.startswith("in_scope(")]
         assert len(in_scope_rules) == 1
 
-    def test_forbidden_outside_normalises_trailing_slash(self):
+    def test_scope_normalises_trailing_slash(self):
         spec_with = compile_spec_dict({
-            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src/"}]
+            "norms": [{"role": "agent", "type": "scope", "paths": ["src/"]}]
         })
         spec_without = compile_spec_dict({
-            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src"}]
+            "norms": [{"role": "agent", "type": "scope", "paths": ["src"]}]
         })
         assert spec_with.facts == spec_without.facts
 
