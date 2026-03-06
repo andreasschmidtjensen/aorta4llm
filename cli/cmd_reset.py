@@ -12,9 +12,10 @@ def add_parser(subparsers):
 
 
 def run(args):
-    from integration.hooks import _default_state_path
+    from integration.hooks import _default_state_path, _legacy_state_path
 
     state_path = _default_state_path(args.org_spec)
+    legacy_path = _legacy_state_path(args.org_spec)
     events_path = Path(args.events_path) if args.events_path else Path(".aorta/events.jsonl")
 
     removed = []
@@ -22,6 +23,11 @@ def run(args):
     if state_path.exists():
         state_path.unlink()
         removed.append(f"state: {state_path}")
+
+    # Also clean up legacy state file if it still exists.
+    if legacy_path.exists():
+        legacy_path.unlink()
+        removed.append(f"state (legacy): {legacy_path}")
 
     if not args.keep_events and events_path.exists():
         events_path.unlink()

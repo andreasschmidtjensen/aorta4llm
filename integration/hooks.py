@@ -73,7 +73,27 @@ def _is_governance_command(cmd: str) -> bool:
 
 
 def _default_state_path(org_spec_path: str | Path) -> Path:
-    """Return ~/.aorta/state-<hash>.json keyed to the org spec's absolute path."""
+    """Return .aorta/state.json relative to the org spec's directory.
+
+    Falls back to the org spec's parent directory if no .aorta/ is found.
+    Migrates from the old ~/.aorta/state-<hash>.json location if needed.
+    """
+    spec_dir = Path(org_spec_path).resolve().parent
+    state_path = spec_dir / "state.json"
+
+    # Migrate from old ~/.aorta/state-<hash>.json if needed.
+    if not state_path.exists():
+        old_path = _legacy_state_path(org_spec_path)
+        if old_path.exists():
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            old_path.rename(state_path)
+            print(f"Migrated state: {old_path} → {state_path}", file=sys.stderr)
+
+    return state_path
+
+
+def _legacy_state_path(org_spec_path: str | Path) -> Path:
+    """Return the old ~/.aorta/state-<hash>.json path (for migration only)."""
     digest = hashlib.sha256(str(Path(org_spec_path).resolve()).encode()).hexdigest()[:12]
     return Path.home() / ".aorta" / f"state-{digest}.json"
 
@@ -452,7 +472,7 @@ def main():
         choices=["pre-tool-use", "post-tool-use", "register", "prompt"],
     )
     parser.add_argument("--org-spec", required=True, help="Path to org spec YAML")
-    parser.add_argument("--state", default=None, help="State file path (default: ~/.aorta/state-<hash>.json)")
+    parser.add_argument("--state", default=None, help="State file path (default: .aorta/state.json)")
     parser.add_argument("--agent", help="Agent ID")
     parser.add_argument("--role", help="Role (for register)")
     parser.add_argument("--scope", default="", help="Scope (for register)")

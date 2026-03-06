@@ -55,11 +55,9 @@ class TestRunInit:
     def test_init_registers_agent(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         run(self._make_args())
-        # State file should exist in ~/.aorta/
-        home_aorta = Path.home() / ".aorta"
-        # Find any state file that was created
-        state_files = list(home_aorta.glob("state-*.json"))
-        assert len(state_files) > 0
+        # State file should exist in .aorta/ (project-local)
+        state_file = tmp_path / ".aorta" / "state.json"
+        assert state_file.exists()
 
     def test_init_with_test_gate_includes_post_hook(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
