@@ -76,19 +76,27 @@ class GovernanceHook:
             self._state_path.parent / "events.jsonl"
         )
         self._service = GovernanceService(self._org_spec_path, engine=engine)
-        self._triggers, self._bash_analysis = self._load_spec_extras(self._org_spec_path)
+        extras = self._load_spec_extras(self._org_spec_path)
+        self._triggers = extras[0]
+        self._bash_analysis = extras[1]
+        self._safe_commands = extras[2]
         self._events: list[dict] = []
         self._replaying = False
         self._replay_state()
 
-    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool]:
-        """Load achievement_triggers and bash_analysis flag from the org spec."""
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str]]:
+        """Load achievement_triggers, bash_analysis flag, and safe_commands from the org spec."""
         try:
             with open(org_spec_path) as f:
                 spec = yaml.safe_load(f)
-            return spec.get("achievement_triggers", []), bool(spec.get("bash_analysis", False))
+            safe_cmds = frozenset(spec.get("safe_commands", []))
+            return (
+                spec.get("achievement_triggers", []),
+                bool(spec.get("bash_analysis", False)),
+                safe_cmds,
+            )
         except Exception:
-            return [], False
+            return [], False, frozenset()
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state."""
@@ -195,7 +203,7 @@ class GovernanceHook:
         if tool_name == "Bash" and self._bash_analysis and params.get("command"):
             from governance.bash_analyzer import analyze_bash_command
 
-            analysis = analyze_bash_command(params["command"])
+            analysis = analyze_bash_command(params["command"], extra_safe=self._safe_commands)
             for write_path in analysis.writes:
                 path_result = self._service.check_permission(
                     agent_id, role, "write_file", {"path": write_path},

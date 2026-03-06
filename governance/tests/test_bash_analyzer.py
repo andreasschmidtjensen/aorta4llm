@@ -6,7 +6,9 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from governance.bash_analyzer import BashAnalysis, analyze_bash_command, _is_safe_command
+from governance.bash_analyzer import (
+    BashAnalysis, analyze_bash_command, _is_safe_command, _heuristic_analyze,
+)
 
 
 class TestSafeCommandDetection:
@@ -35,6 +37,24 @@ class TestSafeCommandDetection:
         assert _is_safe_command("")
         assert _is_safe_command("   ")
 
+    def test_extra_safe_single_word(self):
+        """User-defined safe commands are respected."""
+        assert not _is_safe_command("pytest")
+        assert _is_safe_command("pytest", extra_safe=frozenset(["pytest"]))
+
+    def test_extra_safe_two_word(self):
+        """Multi-word safe commands like 'git status' work."""
+        assert not _is_safe_command("git status")
+        assert _is_safe_command("git status", extra_safe=frozenset(["git status"]))
+
+    def test_extra_safe_two_word_with_args(self):
+        """'git status --short' matches 'git status'."""
+        assert _is_safe_command("git status --short", extra_safe=frozenset(["git status"]))
+
+    def test_extra_safe_does_not_override_redirect_check(self):
+        """Redirects are always unsafe, even for allowlisted commands."""
+        assert not _is_safe_command("pytest > out.txt", extra_safe=frozenset(["pytest"]))
+
 
 class TestAnalyzeBashCommand:
     """Tests with mocked claude CLI subprocess."""
@@ -53,39 +73,26 @@ class TestAnalyzeBashCommand:
 
     @patch("governance.bash_analyzer.subprocess.run")
     def test_successful_analysis(self, mock_run):
+        """Commands with variable expansion bypass heuristic, reach LLM."""
         mock_run.return_value = self._mock_run(json.dumps({
             "writes": ["config/a.py"],
             "is_destructive": False,
             "summary": "copies file to config/",
         }))
 
-        result = analyze_bash_command("cp src/a.py config/a.py")
+        result = analyze_bash_command("cp $SRC config/a.py")
 
         assert result.writes == ["config/a.py"]
         assert result.is_destructive is False
-        assert "config" in result.summary
         # Verify CLAUDECODE is stripped from env
         call_kwargs = mock_run.call_args
         assert "CLAUDECODE" not in call_kwargs.kwargs.get("env", {})
 
     @patch("governance.bash_analyzer.subprocess.run")
-    def test_destructive_command(self, mock_run):
-        mock_run.return_value = self._mock_run(json.dumps({
-            "writes": ["build/"],
-            "is_destructive": True,
-            "summary": "recursively deletes build/",
-        }))
-
-        result = analyze_bash_command("rm -rf build/")
-
-        assert result.is_destructive is True
-        assert "build/" in result.writes
-
-    @patch("governance.bash_analyzer.subprocess.run")
     def test_cli_failure_fails_open(self, mock_run):
         mock_run.return_value = self._mock_run("", returncode=1)
 
-        result = analyze_bash_command("cp a.py b.py")
+        result = analyze_bash_command("python -c $SCRIPT")
 
         assert result.writes == []
         assert "failed" in result.summary
@@ -94,7 +101,7 @@ class TestAnalyzeBashCommand:
     def test_malformed_json_fails_open(self, mock_run):
         mock_run.return_value = self._mock_run("not json at all")
 
-        result = analyze_bash_command("cp a.py b.py")
+        result = analyze_bash_command("python -c $SCRIPT")
 
         assert result.writes == []
         assert "failed" in result.summary
@@ -103,7 +110,7 @@ class TestAnalyzeBashCommand:
     def test_timeout_fails_open(self, mock_run):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="claude", timeout=10)
 
-        result = analyze_bash_command("cp a.py b.py")
+        result = analyze_bash_command("python -c $SCRIPT")
 
         assert result.writes == []
         assert "timed out" in result.summary
@@ -115,7 +122,8 @@ class TestAnalyzeBashCommand:
             '```json\n{"writes": [".env"], "is_destructive": false, "summary": "writes to .env"}\n```'
         )
 
-        result = analyze_bash_command("echo SECRET=x > .env")
+        # Variable expansion bypasses heuristic, reaches LLM.
+        result = analyze_bash_command("echo $SECRET > .env")
 
         assert result.writes == [".env"]
 
@@ -123,7 +131,7 @@ class TestAnalyzeBashCommand:
     def test_cli_not_found_fails_open(self, mock_run):
         mock_run.side_effect = FileNotFoundError("claude not found")
 
-        result = analyze_bash_command("cp a.py b.py")
+        result = analyze_bash_command("python -c $SCRIPT")
 
         assert result.writes == []
         assert "failed" in result.summary
@@ -135,8 +143,93 @@ class TestAnalyzeBashCommand:
             "writes": [], "is_destructive": False, "summary": "test",
         }))
 
-        analyze_bash_command("python script.py")
+        # Variable expansion bypasses heuristic, reaches LLM.
+        analyze_bash_command("python -c $SCRIPT")
 
         args = mock_run.call_args[0][0]
         assert "--model" in args
         assert "haiku" in args
+
+
+class TestHeuristicAnalysis:
+    """Tests for regex-based write path extraction."""
+
+    def test_redirect_detected(self):
+        r = _heuristic_analyze("echo x > config/out.txt")
+        assert r is not None
+        assert "config/out.txt" in r.writes
+
+    def test_append_redirect_detected(self):
+        r = _heuristic_analyze("echo x >> log.txt")
+        assert r is not None
+        assert "log.txt" in r.writes
+
+    def test_cp_detected(self):
+        r = _heuristic_analyze("cp src/a.py dest/b.py")
+        assert r is not None
+        assert "dest/b.py" in r.writes
+
+    def test_mv_detected(self):
+        r = _heuristic_analyze("mv old.py new.py")
+        assert r is not None
+        assert "new.py" in r.writes
+
+    def test_tee_detected(self):
+        r = _heuristic_analyze("echo hello | tee output.txt")
+        assert r is not None
+        assert "output.txt" in r.writes
+
+    def test_mkdir_detected(self):
+        r = _heuristic_analyze("mkdir -p src/new_dir")
+        assert r is not None
+        assert "src/new_dir" in r.writes
+
+    def test_touch_detected(self):
+        r = _heuristic_analyze("touch newfile.py")
+        assert r is not None
+        assert "newfile.py" in r.writes
+
+    def test_rm_detected_as_destructive(self):
+        r = _heuristic_analyze("rm -rf build/")
+        assert r is not None
+        assert r.is_destructive
+        assert "build/" in r.writes
+
+    def test_git_commit_is_safe(self):
+        r = _heuristic_analyze("git commit -m 'feat: x'")
+        assert r is not None
+        assert r.writes == []
+
+    def test_git_push_is_safe(self):
+        r = _heuristic_analyze("git push origin main")
+        assert r is not None
+        assert r.writes == []
+
+    def test_npm_install_is_safe(self):
+        r = _heuristic_analyze("npm install express")
+        assert r is not None
+        assert r.writes == []
+
+    def test_variable_expansion_returns_none(self):
+        """Variable expansion is ambiguous — bail to LLM."""
+        assert _heuristic_analyze("cp $SRC $DEST") is None
+
+    def test_subshell_returns_none(self):
+        assert _heuristic_analyze("$(cat cmd.sh)") is None
+
+    def test_complex_pipe_returns_none(self):
+        """More than 2 pipe segments — bail to LLM."""
+        assert _heuristic_analyze("cat a | sort | tee b | head") is None
+
+    def test_simple_command_no_writes(self):
+        """Simple command with no write patterns — heuristic says safe."""
+        r = _heuristic_analyze("python script.py")
+        assert r is not None
+        assert r.writes == []
+
+    def test_heuristic_skips_llm_for_cp(self):
+        """cp is handled by heuristic, LLM not called."""
+        with patch("governance.bash_analyzer.subprocess.run") as mock_run:
+            result = analyze_bash_command("cp src/a.py config/a.py")
+            mock_run.assert_not_called()
+        assert "config/a.py" in result.writes

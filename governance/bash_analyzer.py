@@ -45,7 +45,7 @@ class BashAnalysis:
     summary: str = ""
 
 
-def _is_safe_command(command: str) -> bool:
+def _is_safe_command(command: str, extra_safe: frozenset[str] | None = None) -> bool:
     """Check if command is obviously read-only (no LLM needed)."""
     stripped = command.strip()
     if not stripped:
@@ -64,19 +64,112 @@ def _is_safe_command(command: str) -> bool:
     if not tokens:
         return True
 
+    all_safe = _SAFE_COMMANDS | (extra_safe or frozenset())
     first = tokens[0].rsplit("/", 1)[-1]  # basename
-    return first in _SAFE_COMMANDS
+
+    # Check multi-word commands (e.g. "git status", "npm test").
+    if len(tokens) >= 2:
+        two_word = f"{first} {tokens[1]}"
+        if two_word in all_safe:
+            return True
+
+    return first in all_safe
 
 
-def analyze_bash_command(command: str) -> BashAnalysis:
+# Regex patterns for heuristic write-path extraction.
+_REDIRECT_RE = re.compile(r">{1,2}\s*(\S+)")
+_TEE_RE = re.compile(r"\btee\s+(?:-a\s+)?(\S+)")
+_CP_RE = re.compile(r"\bcp\s+(?:-\w+\s+)*\S+\s+(\S+)")
+_MV_RE = re.compile(r"\bmv\s+(?:-\w+\s+)*\S+\s+(\S+)")
+_RM_RE = re.compile(r"\brm\s+(?:-\w+\s+)*(.+)")
+_MKDIR_RE = re.compile(r"\bmkdir\s+(?:-\w+\s+)*(\S+)")
+_TOUCH_RE = re.compile(r"\btouch\s+(\S+)")
+
+# Commands that look like writes but don't create user-visible file changes.
+_SAFE_WRITE_PREFIXES = [
+    "git commit", "git push", "git stash", "git tag",
+    "npm install", "pip install", "uv pip install", "uv add",
+]
+
+
+def _heuristic_analyze(command: str) -> BashAnalysis | None:
+    """Try to extract write paths from common shell patterns.
+
+    Returns BashAnalysis if confident, None if ambiguous (needs LLM).
+    """
+    stripped = command.strip()
+
+    # Known commands that don't produce user file writes.
+    for prefix in _SAFE_WRITE_PREFIXES:
+        if stripped.startswith(prefix):
+            return BashAnalysis(summary=f"known safe command: {prefix}")
+
+    # Variable expansion / subshells — ambiguous, bail to LLM.
+    if re.search(r"[$`]|\$\(", stripped):
+        return None
+
+    # Too many pipes — complex, bail to LLM.
+    segments = stripped.split("|")
+    if len(segments) > 2:
+        return None
+
+    writes: list[str] = []
+    is_destructive = False
+
+    for m in _REDIRECT_RE.finditer(stripped):
+        writes.append(m.group(1))
+    for m in _TEE_RE.finditer(stripped):
+        writes.append(m.group(1))
+    for m in _CP_RE.finditer(stripped):
+        writes.append(m.group(1))
+    for m in _MV_RE.finditer(stripped):
+        writes.append(m.group(1))
+    for m in _MKDIR_RE.finditer(stripped):
+        writes.append(m.group(1))
+    for m in _TOUCH_RE.finditer(stripped):
+        writes.append(m.group(1))
+
+    rm_match = _RM_RE.search(stripped)
+    if rm_match:
+        is_destructive = True
+        try:
+            rm_paths = shlex.split(rm_match.group(1))
+            writes.extend(p for p in rm_paths if not p.startswith("-"))
+        except ValueError:
+            return None  # Can't parse — ambiguous.
+
+    if writes:
+        return BashAnalysis(
+            writes=writes,
+            is_destructive=is_destructive,
+            summary=f"heuristic: {len(writes)} write path(s) detected",
+        )
+
+    # No writes detected and no complex syntax — probably read-only.
+    if len(segments) <= 2 and not re.search(r"[>;]", stripped):
+        return BashAnalysis(summary="heuristic: no write patterns detected")
+
+    # Ambiguous — fall through to LLM.
+    return None
+
+
+def analyze_bash_command(
+    command: str, extra_safe: frozenset[str] | None = None,
+) -> BashAnalysis:
     """Analyze a bash command using Claude CLI with Haiku.
 
     Returns structured output describing file writes and destructiveness.
     Fails open: returns permissive BashAnalysis on any error.
     """
-    if _is_safe_command(command):
+    if _is_safe_command(command, extra_safe):
         return BashAnalysis(summary="safe read-only command")
 
+    # Try heuristic analysis (instant, no LLM call).
+    heuristic = _heuristic_analyze(command)
+    if heuristic is not None:
+        return heuristic
+
+    # Fall through to LLM for ambiguous commands.
     prompt = _PROMPT_TEMPLATE.format(command=command)
 
     try:

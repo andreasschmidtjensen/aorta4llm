@@ -144,6 +144,8 @@
   .event .badge.agent_text { background: #1a2a2a; color: var(--blue); }
   .event .badge.agent_tool { background: #2a2a1a; color: var(--amber); }
   .event .badge.agent_turn { background: #1a2a1a; color: var(--dim); }
+  .event .badge.bash_approve { background: #1a3a1a; color: var(--green); }
+  .event .badge.bash_block { background: #3a1a1a; color: var(--red); }
   .event.phase-marker {
     background: var(--surface); border-left: 3px solid #bb9af7;
     margin: 6px 0; font-weight: 600;
@@ -544,6 +546,18 @@ function renderAgentDetailItem(ev) {
     </div>`;
   }
 
+  if (ev.type === 'bash_analysis') {
+    const cls = ev.decision === 'approve' ? '' : ' blocked';
+    const sym = ev.decision === 'approve' ? '\u2713' : '\u2717';
+    const writes = (ev.writes || []).join(', ');
+    return `<div class="agent-detail-item agent-check-item${cls}">
+      <span class="ts">${ts}</span>
+      ${sym} bash ${esc(ev.decision)} <span style="color:var(--dim)">${esc((ev.command || '').substring(0, 80))}</span>
+      ${writes ? '<br><span style="color:var(--dim)">writes: ' + esc(writes) + '</span>' : ''}
+      ${ev.reason ? '<br><span style="color:var(--red);font-size:11px">' + esc(ev.reason) + '</span>' : ''}
+    </div>`;
+  }
+
   return '';
 }
 
@@ -656,6 +670,18 @@ function addEventToFeed(ev) {
       <span class="badge agent_turn">\u21BA turn ${ev.turn}</span>
       <span class="agent-ref">${esc(ev.agent)}</span>
     `;
+  } else if (ev.type === 'bash_analysis') {
+    const badge = ev.decision === 'approve' ? 'bash_approve' : 'bash_block';
+    const symbol = ev.decision === 'approve' ? '\u2713' : '\u2717';
+    const cmd = (ev.command || '').substring(0, 60);
+    const writes = (ev.writes || []).join(', ');
+    div.innerHTML = `
+      <span class="ts">${ts}</span>
+      <span class="badge ${badge}">${symbol} bash</span>
+      <span class="agent-ref">${esc(ev.agent)}</span>
+      <span class="detail">${esc(cmd)}${ev.command && ev.command.length > 60 ? '...' : ''}</span>
+      <span class="path-ref">${writes ? 'writes: ' + esc(writes) : ''}</span>
+    `;
   } else {
     return;
   }
@@ -675,6 +701,11 @@ function processEvent(ev) {
     };
     renderAgents();
   } else if (ev.type === 'check') {
+    state.stats.checks++;
+    if (ev.decision === 'approve') state.stats.approved++;
+    else state.stats.blocked++;
+    renderStats();
+  } else if (ev.type === 'bash_analysis') {
     state.stats.checks++;
     if (ev.decision === 'approve') state.stats.approved++;
     else state.stats.blocked++;
@@ -715,7 +746,7 @@ function processEvent(ev) {
 
   // Route check/norm_change to both per-agent store and main feed
   if (ev.agent) {
-    const sharedTypes = ['check', 'norm_change'];
+    const sharedTypes = ['check', 'norm_change', 'bash_analysis'];
     if (sharedTypes.includes(ev.type)) {
       appendAgentEvent(ev);
     }

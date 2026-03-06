@@ -26,8 +26,11 @@ orchestrator = [
     # Requires Claude Code CLI: npm install -g @anthropic-ai/claude-code
 ]
 
+[project.scripts]
+aorta = "cli.main:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["governance", "integration", "dashboard", "orchestrator"]
+packages = ["governance", "integration", "dashboard", "orchestrator", "cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["governance/tests"]
