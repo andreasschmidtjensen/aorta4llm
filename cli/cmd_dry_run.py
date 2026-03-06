@@ -13,6 +13,24 @@ def add_parser(subparsers):
     p.set_defaults(func=run)
 
 
+def _check_self_protection(action: str, path: str) -> str | None:
+    """Check hook-layer self-protection rules. Returns block reason or None."""
+    from integration.hooks import PROTECTED_PATHS
+    if action == "write_file" and path:
+        for protected in PROTECTED_PATHS:
+            if path.startswith(protected) or path == protected.rstrip("/"):
+                return f"write to '{path}' denied: governance infrastructure is protected"
+    return None
+
+
+def _check_governance_command(command: str) -> str | None:
+    """Check if a bash command invokes governance tools. Returns block reason or None."""
+    from integration.hooks import _is_governance_command
+    if _is_governance_command(command):
+        return "agents cannot run governance commands"
+    return None
+
+
 def run(args):
     from governance.service import GovernanceService
     from integration.hooks import TOOL_ACTION_MAP
@@ -36,23 +54,52 @@ def run(args):
         elif args.path:
             params["path"] = args.path
 
-        result = service.check_permission(args.agent, args.role, action, params)
-        symbol = "APPROVE" if result.permitted else "BLOCK"
         print(f"  Tool:     {args.tool} -> {action}")
         if args.path:
             print(f"  Path:     {args.path}")
-        print(f"  Decision: {symbol}")
-        if result.reason:
-            print(f"  Reason:   {result.reason}")
+
+        # Check hook-layer self-protection first.
+        sp_reason = _check_self_protection(action, params.get("path", ""))
+        if sp_reason:
+            print(f"  Decision: BLOCK [hook]")
+            print(f"  Reason:   {sp_reason}")
+        else:
+            result = service.check_permission(args.agent, args.role, action, params)
+            symbol = "APPROVE" if result.permitted else "BLOCK"
+            print(f"  Decision: {symbol}")
+            if result.reason:
+                print(f"  Reason:   {result.reason}")
 
     if args.bash_command:
         from governance.bash_analyzer import analyze_bash_command
 
-        print(f"\n  Bash command: {args.bash_command}")
+        # Check execute_command permission (catches forbidden_command norms).
+        if not args.tool:
+            print(f"  Bash command: {args.bash_command}")
+
+            # Check hook-layer governance command blocking first.
+            gc_reason = _check_governance_command(args.bash_command)
+            if gc_reason:
+                print(f"  Decision:     BLOCK [hook]")
+                print(f"  Reason:       {gc_reason}")
+                return
+
+            cmd_result = service.check_permission(
+                args.agent, args.role, "execute_command",
+                {"command": args.bash_command},
+            )
+            symbol = "APPROVE" if cmd_result.permitted else "BLOCK"
+            severity = f" [{cmd_result.severity}]" if not cmd_result.permitted else ""
+            print(f"  Decision:     {symbol}{severity}")
+            if cmd_result.reason:
+                print(f"  Reason:       {cmd_result.reason}")
+            print()
+
+        print(f"  Bash analysis: {args.bash_command}")
         analysis = analyze_bash_command(args.bash_command)
-        print(f"  Analysis:     {analysis.summary}")
+        print(f"  Method:        {analysis.summary}")
         if analysis.writes:
-            print(f"  Write paths:  {analysis.writes}")
+            print(f"  Write paths:   {analysis.writes}")
             for write_path in analysis.writes:
                 path_result = service.check_permission(
                     args.agent, args.role, "write_file", {"path": write_path},

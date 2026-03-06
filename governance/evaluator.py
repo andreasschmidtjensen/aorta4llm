@@ -185,6 +185,10 @@ class ConditionEvaluator:
         if term.functor == "str_contains" and len(term.args) == 2:
             return self._eval_str_contains(term.args[0], term.args[1], subst)
 
+        # path_matches(Path, Pattern) — fnmatch glob matching
+        if term.functor == "path_matches" and len(term.args) == 2:
+            return self._eval_path_matches(term.args[0], term.args[1], subst)
+
         # member(X, List)
         if term.functor == "member" and len(term.args) == 2:
             return self._eval_member(term.args[0], term.args[1], subst)
@@ -271,6 +275,19 @@ class ConditionEvaluator:
                 return [subst]
             return []
         raise _EvalError("str_contains: requires two ground atoms")
+
+    def _eval_path_matches(
+        self, path: TermType, pattern: TermType, subst: Substitution
+    ) -> list[Substitution]:
+        """Evaluate path_matches/2 — fnmatch glob matching."""
+        import fnmatch
+        path = apply_subst(path, subst)
+        pattern = apply_subst(pattern, subst)
+        if isinstance(path, Atom) and isinstance(pattern, Atom):
+            if fnmatch.fnmatch(path.value, pattern.value):
+                return [subst]
+            return []
+        raise _EvalError("path_matches: requires two ground atoms")
 
     def _eval_member(self, elem: TermType, lst: TermType, subst: Substitution) -> list[Substitution]:
         """Evaluate member/2 — check list membership."""

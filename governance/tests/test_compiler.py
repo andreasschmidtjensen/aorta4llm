@@ -169,20 +169,20 @@ class TestHighLevelNorms:
         # 2 facts per path (read + write)
         assert len(cond_facts) == 4
 
-    def test_forbidden_paths_emits_one_cond_per_path(self):
+    def test_readonly_emits_one_cond_per_path(self):
         spec = compile_spec_dict({
             "norms": [
-                {"role": "agent", "type": "forbidden_paths",
+                {"role": "agent", "type": "readonly",
                  "paths": ["config/", ".env", "secrets/"]}
             ]
         })
         cond_facts = [f for f in spec.facts if f.startswith("cond(")]
         assert len(cond_facts) == 3
 
-    def test_forbidden_paths_uses_atom_concat(self):
+    def test_readonly_uses_atom_concat(self):
         spec = compile_spec_dict({
             "norms": [
-                {"role": "agent", "type": "forbidden_paths", "paths": [".env"]}
+                {"role": "agent", "type": "readonly", "paths": [".env"]}
             ]
         })
         assert any("atom_concat('.env', _, Path)" in f for f in spec.facts)

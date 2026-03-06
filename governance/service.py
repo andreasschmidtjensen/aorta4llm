@@ -49,6 +49,12 @@ class GovernanceService:
         """Notify the engine of state changes after a tool call."""
         return self._engine.notify_action(agent, role, achieved, deadlines_reached)
 
+    def clear_achievement(self, objective: str) -> bool:
+        """Remove an achievement, making it no longer satisfied."""
+        from governance.terms import Atom, parse_term
+        term = parse_term(objective) if "(" in objective else Atom(objective)
+        return self._engine._facts.retract_fact("achieved", (term,))
+
     def get_obligations(self, agent: str, role: str) -> dict:
         """Return active obligations and generated options for an agent."""
         return self._engine.get_obligations(agent, role)

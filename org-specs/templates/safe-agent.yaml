@@ -4,7 +4,7 @@
 # defined scope but be physically blocked from touching sensitive files.
 #
 # Usage:
-#   aorta init --template safe-agent --scope src/ --agent dev
+#   aorta init --template safe-agent --scope src/
 
 organization: safe_agent
 bash_analysis: true
@@ -26,16 +26,20 @@ norms:
     paths:
       - src/
 
-  # Block writes to configuration and secrets.
-  # Add more paths as needed.
+  # Block reads AND writes to secrets and sensitive files.
   - role: agent
-    type: forbidden_paths
+    type: protected
     paths:
       - .env
       - .env.local
-      - config/
       - secrets/
       - .ssh/
+
+  # Block writes to configuration (readable but not writable).
+  - role: agent
+    type: readonly
+    paths:
+      - config/
 
   # Soft-block git commit/push (agent must confirm with user).
   - role: agent
@@ -47,11 +51,3 @@ norms:
     type: forbidden_command
     command_pattern: "git push"
     severity: soft
-
-workflow:
-  - agent: my-agent
-    role: agent
-    scope: src/
-    prompt: "{task}"
-    achievements:
-      - task_complete

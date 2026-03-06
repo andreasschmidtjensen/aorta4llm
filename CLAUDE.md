@@ -45,21 +45,14 @@ uv run pytest -v
 Quickstart:
 
 ```bash
-aorta init --template safe-agent --scope src/ --agent dev
+aorta init --template safe-agent --scope src/
 ```
 
-This creates `.aorta/safe-agent.yaml` and `.claude/settings.local.json` with hooks configured. Re-run with `--reinit` to update existing hooks.
-
-For multi-agent setups, register agents manually:
-
-```bash
-aorta hook register --org-spec .aorta/review-gate.yaml \
-    --agent impl-1 --role implementer --scope src/auth/
-```
+This creates `.aorta/safe-agent.yaml` and `.claude/settings.local.json` with hooks configured. Re-run with `--reinit` to update existing hooks. The agent is registered as `agent` automatically.
 
 Grant temporary exceptions: `aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env`
 
-Debug norm evaluation: `aorta explain --org-spec .aorta/safe-agent.yaml --tool Write --path config/x.py --agent dev --role agent`
+Debug norm evaluation: `aorta explain --org-spec .aorta/safe-agent.yaml --tool Write --path config/x.py --agent agent --role agent`
 
 Run the demo: `uv run python examples/three_role_demo/demo.py`
 

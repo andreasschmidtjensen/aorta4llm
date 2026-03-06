@@ -38,6 +38,7 @@ def run(args):
     # Load state
     agents = {}
     achievements = []
+    exceptions = []
     if state_path.exists():
         state = json.loads(state_path.read_text())
         for event in state.get("events", []):
@@ -48,6 +49,7 @@ def run(args):
                 }
             elif event["type"] == "achieved":
                 achievements.extend(event["objectives"])
+        exceptions = state.get("exceptions", [])
 
     # Load recent events for stats
     events = read_events(events_path, limit=200) if events_path.exists() else []
@@ -61,6 +63,7 @@ def run(args):
             "organization": spec.get("organization", "?"),
             "agents": agents,
             "achievements": achievements,
+            "exceptions": exceptions,
             "norms": len(spec.get("norms", [])),
             "stats": {"checks": len(checks), "approved": approved, "blocked": blocked},
             "state_path": str(state_path),
@@ -97,7 +100,7 @@ def run(args):
                 detail = f" — scope: {', '.join(norm.get('paths', []))}"
             elif ntype == "protected":
                 detail = f" — {', '.join(norm.get('paths', []))}"
-            elif ntype == "forbidden_paths":
+            elif ntype == "readonly":
                 detail = f" — {', '.join(norm.get('paths', []))}"
             elif ntype == "forbidden_command":
                 detail = f" — pattern: '{norm.get('command_pattern', '')}'"
@@ -112,6 +115,15 @@ def run(args):
     else:
         print("Achievements: none")
     print()
+
+    # Allow-once exceptions
+    if exceptions:
+        print(f"Allow-once exceptions ({len(exceptions)}):")
+        for exc in exceptions:
+            agent_str = f" (agent: {exc['agent']})" if exc.get("agent", "*") != "*" else ""
+            print(f"  {exc['path']}{agent_str} — {exc.get('uses', 0)} use(s) remaining")
+        print()
+
 
     # Stats
     if checks:

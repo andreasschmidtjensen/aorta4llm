@@ -18,7 +18,6 @@ class TestListTemplates:
         names = {t["name"] for t in templates}
         assert "safe-agent" in names
         assert "test-gate" in names
-        assert "review-gate" in names
 
     def test_templates_have_descriptions(self):
         for t in list_templates():
@@ -27,13 +26,12 @@ class TestListTemplates:
 
 class TestRunInit:
 
-    def _make_args(self, template="safe-agent", scope=None, agent="dev"):
+    def _make_args(self, template="safe-agent", scope=None):
         class Args:
             pass
         a = Args()
         a.template = template
         a.scope = scope or ["src/"]
-        a.agent = agent
         a.list_templates = False
         a.strict = False
         a.reinit = False

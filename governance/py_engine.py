@@ -15,6 +15,16 @@ from governance.terms import (
 )
 
 
+def _prolog_list_to_strings(lst: TermType) -> list[str]:
+    """Convert a Prolog-style list term to a Python list of strings."""
+    result = []
+    current = lst
+    while isinstance(current, Term) and current.functor == "." and len(current.args) == 2:
+        result.append(term_to_str(current.args[0]))
+        current = current.args[1]
+    return result
+
+
 def _describe_condition(cond: TermType, subst: Substitution) -> str:
     """Generate a human-readable explanation of why a condition blocked."""
     cond = apply_subst(cond, subst)
@@ -24,8 +34,12 @@ def _describe_condition(cond: TermType, subst: Substitution) -> str:
         if isinstance(inner, Term) and inner.functor == "in_scope":
             # not(in_scope(Path, Scope)) -> "path is outside allowed scope 'src/'"
             scope = term_to_str(inner.args[1]) if len(inner.args) > 1 else "?"
-            return f"path is outside allowed scope {scope}"
+            return f"path is outside allowed scope '{scope}'"
         if isinstance(inner, Term) and inner.functor == "in_any_scope":
+            if len(inner.args) > 1:
+                items = _prolog_list_to_strings(inner.args[1])
+                if items:
+                    return f"path is outside allowed scopes {items}"
             return "path is outside all allowed scopes"
         if isinstance(inner, Term) and inner.functor == "achieved":
             req = term_to_str(inner.args[0]) if inner.args else "?"
@@ -36,6 +50,10 @@ def _describe_condition(cond: TermType, subst: Substitution) -> str:
         # atom_concat('prefix', _, Path) -> "path matches forbidden prefix 'prefix'"
         if len(cond.args) >= 1 and isinstance(cond.args[0], Atom):
             return f"path matches forbidden prefix '{cond.args[0].value}'"
+
+    if isinstance(cond, Term) and cond.functor == "path_matches":
+        if len(cond.args) >= 2 and isinstance(cond.args[1], Atom):
+            return f"path matches pattern '{cond.args[1].value}'"
 
     if isinstance(cond, Term) and cond.functor == "str_contains":
         if len(cond.args) >= 2 and isinstance(cond.args[1], Atom):

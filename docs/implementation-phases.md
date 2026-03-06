@@ -5,7 +5,7 @@
 Ref: conversation 2026-03-04, review + 4 implemented items + security analysis.
 
 ## Already Done (this session)
-- **Item 3**: High-level norm syntax (`forbidden_outside`, `forbidden_paths`, `required_before`)
+- **Item 3**: High-level norm syntax (`forbidden_outside`, `readonly`, `required_before`)
 - **Item 4**: Decoupled orchestrator (generic workflow loop from org spec YAML)
 - **Item 1**: PostToolUse achievement tracking (triggers, Bash command passing)
 - **Item 2**: Template org specs (`safe-agent`, `test-gate`, `review-gate`)

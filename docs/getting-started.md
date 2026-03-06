@@ -11,31 +11,26 @@ uv pip install -e "/path/to/aorta4llm"
 In your project directory:
 
 ```bash
-aorta init --template safe-agent --scope src/ --agent dev
+aorta init --template safe-agent --scope src/
 ```
 
 This creates:
 - `.aorta/safe-agent.yaml` — the org spec (governance rules), with `scope` paths set to your `--scope`
 - `.claude/settings.local.json` — Claude Code hook configuration
 - `.aorta/events.jsonl` — event log (project-local)
-- Registers agent `dev` with scope `src/`
+- Registers agent `agent` with scope `src/`
 
 Multiple scopes are supported:
 
 ```bash
-aorta init --template safe-agent --scope src/ tests/ --agent dev
+aorta init --template safe-agent --scope src/ tests/
 ```
 
-Strict mode hooks reads too (blocks the agent from reading sensitive files):
-
-```bash
-aorta init --template safe-agent --scope src/ --agent dev --strict
-```
+The `safe-agent` template uses `protected` norms for `.env` and `secrets/`, so Read/Glob/Grep tools are automatically hooked. Use `--strict` to hook reads even without `protected` norms.
 
 Available templates (`aorta init --list-templates`):
 - **safe-agent** — single agent scoped to a directory
 - **test-gate** — must pass tests before committing
-- **review-gate** — reviewer cannot modify source files
 
 ## Customize the org spec
 
@@ -58,12 +53,12 @@ norms:
   # Protect sensitive files from both reading and writing
   - type: protected
     role: agent
-    paths: [".env", ".env.local", "secrets/"]
+    paths: [".env", ".env.local", "secrets/", "*.key", "*.pem"]
 
   # Block writes to config (readable but not writable)
-  - type: forbidden_paths
+  - type: readonly
     role: agent
-    paths: ["config/"]
+    paths: ["config/", "**/*.secret"]
 
   # Require tests before committing
   - type: required_before
@@ -87,12 +82,13 @@ norms:
     role: agent
     command_pattern: "git reset --hard"
 
-# Mark tests_passing when pytest succeeds
+# Mark tests_passing when pytest succeeds; reset when files change
 achievement_triggers:
   - tool: Bash
     command_pattern: pytest
     exit_code: 0
     marks: tests_passing
+    reset_on_file_change: true
 
 # Analyze bash commands for hidden file writes
 bash_analysis: true
@@ -112,8 +108,8 @@ hard-blocks writes to governance infrastructure regardless of your org spec.
 | Type | What it blocks | Key fields |
 |------|---------------|------------|
 | `scope` | `write_file` outside allowed directories | `paths` (list) |
-| `protected` | `read_file` AND `write_file` matching path prefixes | `paths` (list) |
-| `forbidden_paths` | `write_file` matching path prefixes | `paths` (list) |
+| `protected` | `read_file` AND `write_file` matching path prefixes or globs | `paths` (list) |
+| `readonly` | `write_file` matching path prefixes or globs | `paths` (list) |
 | `forbidden_command` | `execute_command` containing a substring | `command_pattern`, optional `severity` |
 | `required_before` | `execute_command` until an achievement exists | `command_pattern`, `requires` |
 | `obliged` | Creates an obligation with a deadline | `objective`, `condition`, `deadline` |
@@ -142,12 +138,12 @@ Checks for missing fields, undefined roles, invalid norm types, and broken refer
 # Test a file write
 aorta dry-run --org-spec .aorta/safe-agent.yaml \
   --tool Write --path config/secret.py \
-  --agent dev --role agent --scope src/
+  --agent agent --role agent --scope src/
 
 # Test a bash command
 aorta dry-run --org-spec .aorta/safe-agent.yaml \
   --bash-command "cp src/a.py /tmp/leak.py" \
-  --agent dev --role agent --scope src/
+  --agent agent --role agent --scope src/
 ```
 
 ## How it works at runtime
@@ -192,41 +188,25 @@ Or pass `--with-dashboard` to `aorta init` to get the command printed for you.
 
 Open http://localhost:5111. Shows permission checks, bash analysis events, norm changes, and per-agent detail. Events are tagged with `org_spec` for filtering across projects.
 
-## Multi-agent setup
+## Watch (live event tail)
 
-Register agents first:
-
-```bash
-aorta hook register --org-spec .aorta/workflow.yaml \
-  --agent impl-1 --role implementer --scope src/auth/
-
-aorta hook register --org-spec .aorta/workflow.yaml \
-  --agent rev-1 --role reviewer
-```
-
-Then set `AORTA_AGENT` per terminal before launching Claude Code:
+Monitor governance events in real-time from a separate terminal:
 
 ```bash
-# Terminal 1
-export AORTA_AGENT=impl-1
-claude
-
-# Terminal 2
-export AORTA_AGENT=rev-1
-claude
+aorta watch --org-spec .aorta/safe-agent.yaml
 ```
 
-The hook reads `AORTA_AGENT` from the environment to identify which agent is making the call.
+Shows blocks, approvals, registrations, and achievements as they happen. Useful during a Claude Code session.
 
 ## Re-initializing
 
 Running `aorta init` when aorta hooks already exist will exit with an error. Use `--reinit` to overwrite:
 
 ```bash
-aorta init --template safe-agent --scope src/ tests/ --agent dev --reinit
+aorta init --template safe-agent --scope src/ tests/ --reinit
 ```
 
-Non-aorta hooks (e.g., your own linters) are always preserved — only aorta hooks are replaced.
+Non-aorta hooks (e.g., your own linters) are always preserved — only aorta hooks are replaced. `--reinit` also clears allow-once exceptions and soft block state.
 
 ## One-time exceptions
 
@@ -236,7 +216,7 @@ When a hook blocks an action, the block message includes an `allow-once` command
 aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env
 ```
 
-The next access to `.env` will be approved; subsequent accesses are blocked again. Use `--agent dev` to restrict the exception to a specific agent.
+The next access to `.env` will be approved; subsequent accesses are blocked again. Use `--agent <name>` to restrict the exception to a specific agent in multi-agent setups.
 
 ## Explain (debugging)
 
@@ -244,13 +224,14 @@ To understand why an action is allowed or blocked:
 
 ```bash
 aorta explain --org-spec .aorta/safe-agent.yaml \
-  --tool Write --path config/db.yml --agent dev --role agent --scope "src/"
+  --tool Write --path config/db.yml --agent agent --role agent --scope "src/"
 ```
 
 Shows each norm, whether it applies, and why it matches or doesn't.
 
 ## Limitations
 
+- **No content governance**: aorta blocks *writing to* `.env` but cannot prevent the agent from *reading* a file and pasting its contents elsewhere. Use `protected` norms to block reads of truly sensitive files.
 - **Bash escape hatch**: an agent can construct commands that evade heuristic detection (e.g., `python -c "open('x','w')..."`). LLM analysis catches most of these but isn't bulletproof.
 - **No filesystem monitoring**: governance only sees tool calls, not side effects.
 - **LLM analysis latency**: ~5s per ambiguous bash command. The heuristic pre-filter handles ~80% of patterns instantly.

@@ -19,6 +19,7 @@ def main():
     from cli.cmd_reset import add_parser as add_reset
     from cli.cmd_allow_once import add_parser as add_allow_once
     from cli.cmd_explain import add_parser as add_explain
+    from cli.cmd_watch import add_parser as add_watch
 
     add_validate(sub)
     add_dry_run(sub)
@@ -28,6 +29,7 @@ def main():
     add_reset(sub)
     add_allow_once(sub)
     add_explain(sub)
+    add_watch(sub)
 
     args = parser.parse_args()
     if not args.command:

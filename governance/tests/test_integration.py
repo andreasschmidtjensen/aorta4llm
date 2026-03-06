@@ -472,6 +472,61 @@ class TestPostToolUseAchievements:
         )
         assert r2["decision"] == "approve"
 
+    def test_reset_on_file_change_invalidates_achievement(self, tmp_path):
+        """Writing a file clears achievements marked with reset_on_file_change."""
+        import yaml
+        spec_dict = {
+            "organization": "reset_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["tests_passing"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "required_before",
+                "command_pattern": "git commit",
+                "requires": "tests_passing",
+            }],
+            "achievement_triggers": [{
+                "tool": "Bash",
+                "command_pattern": "pytest",
+                "exit_code": 0,
+                "marks": "tests_passing",
+                "reset_on_file_change": True,
+            }],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+
+        # Tests pass → commit unlocked
+        hook.post_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 0}},
+            agent="dev",
+        )
+        r1 = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}},
+            agent="dev",
+        )
+        assert r1["decision"] == "approve"
+
+        # Write a file → achievement cleared
+        hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "src/app.py"}},
+            agent="dev",
+        )
+
+        # Commit blocked again
+        r2 = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}},
+            agent="dev",
+        )
+        assert r2["decision"] == "block"
+
 
 class TestSystemPromptInjection:
     """Tests for system prompt generation from obligations."""
@@ -823,3 +878,199 @@ class TestBashAnalysisIntegration:
             bash_events = [json.loads(l) for l in lines if "bash_analysis" in l]
             assert len(bash_events) >= 1
             assert bash_events[-1]["decision"] == "block"
+
+
+class TestSoftBlockLogging:
+    """Verify soft block events log the actual decision, not pre-decision."""
+
+    def _make_hook(self, tmp_path):
+        import yaml
+        spec_dict = {
+            "organization": "log_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "type": "forbidden_command",
+                "role": "agent",
+                "command_pattern": "git commit",
+                "severity": "soft",
+            }],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+        return hook
+
+    def test_first_attempt_logged_as_block(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        cmd = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}}
+        hook.pre_tool_use(cmd, agent="dev")
+
+        lines = hook._events_path.read_text().strip().split("\n")
+        checks = [json.loads(l) for l in lines if json.loads(l).get("type") == "check"]
+        assert checks[-1]["decision"] == "block"
+
+    def test_retry_logged_as_approve(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        cmd = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}}
+
+        hook.pre_tool_use(cmd, agent="dev")  # first: block
+        hook.pre_tool_use(cmd, agent="dev")  # retry: approve
+
+        lines = hook._events_path.read_text().strip().split("\n")
+        checks = [json.loads(l) for l in lines if json.loads(l).get("type") == "check"]
+        assert checks[-1]["decision"] == "approve"
+        assert checks[-1]["severity"] == "soft"
+
+
+class TestClearTransientState:
+    """Verify reinit clears exceptions and soft block cache."""
+
+    def test_clear_transient_state(self, tmp_path):
+        import yaml
+        spec_dict = {
+            "organization": "clear_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "protected",
+                "paths": [".env"],
+            }],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        state_path = tmp_path / "state.json"
+
+        hook = GovernanceHook(spec_file, state_path=state_path)
+        hook.register_agent("dev", "agent", scope="src/")
+
+        # Add exception and soft block
+        hook._exceptions.append({"path": ".env", "agent": "*", "ts": 0, "uses": 1})
+        hook._soft_block_cache["test_key"] = 12345.0
+        hook._save_state()
+
+        # Verify they're in state
+        state = json.loads(state_path.read_text())
+        assert len(state.get("exceptions", [])) == 1
+        assert len(state.get("soft_blocks", {})) == 1
+
+        # Clear
+        hook.clear_transient_state()
+
+        state = json.loads(state_path.read_text())
+        assert state.get("exceptions", []) == []
+        assert state.get("soft_blocks", {}) == {}
+
+
+class TestGlobPatternPaths:
+    """Tests for glob pattern support in readonly and protected norms."""
+
+    def _make_hook(self, tmp_path, norms):
+        import yaml
+        spec_dict = {
+            "organization": "glob_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": norms,
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent", scope="")
+        return hook
+
+    def test_glob_readonly_blocks_matching(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "role": "agent",
+            "type": "readonly",
+            "paths": ["*.key", "*.pem"],
+        }])
+        result = hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "server.key"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_glob_readonly_allows_non_matching(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "role": "agent",
+            "type": "readonly",
+            "paths": ["*.key"],
+        }])
+        result = hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "src/app.py"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+    def test_glob_protected_blocks_read(self, tmp_path):
+        hook = self._make_hook(tmp_path, [{
+            "role": "agent",
+            "type": "protected",
+            "paths": ["*.secret"],
+        }])
+        result = hook.pre_tool_use(
+            {"tool_name": "Read", "tool_input": {"file_path": "db.secret"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_double_star_glob(self, tmp_path):
+        """Test **/*.key pattern."""
+        hook = self._make_hook(tmp_path, [{
+            "role": "agent",
+            "type": "readonly",
+            "paths": ["**/*.key"],
+        }])
+        result = hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "certs/server.key"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+
+class TestActionableBlockMessages:
+    """Verify block messages include allowed scopes."""
+
+    def test_scope_block_includes_allowed_scopes(self, tmp_path):
+        import yaml
+        spec_dict = {
+            "organization": "msg_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "scope",
+                "paths": ["src/", "tests/"],
+            }],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent", scope="src/ tests/")
+
+        result = hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "README.md"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "src/" in result["reason"]
+        assert "tests/" in result["reason"]

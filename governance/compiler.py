@@ -67,7 +67,7 @@ def _compile_norms(norms: list, spec: CompiledSpec) -> None:
 
     Handles both raw Prolog-syntax norms and high-level shorthand types:
     - scope: forbid writes outside a given directory prefix
-    - forbidden_paths: forbid writes matching any of a list of path prefixes
+    - readonly: forbid writes matching any of a list of path prefixes
     - required_before: block a command until an achievement exists
     """
     for norm in norms:
@@ -75,8 +75,8 @@ def _compile_norms(norms: list, spec: CompiledSpec) -> None:
 
         if norm_type == "scope":
             _compile_scope(norm, spec)
-        elif norm_type == "forbidden_paths":
-            _compile_forbidden_paths(norm, spec)
+        elif norm_type == "readonly":
+            _compile_readonly(norm, spec)
         elif norm_type == "required_before":
             _compile_required_before(norm, spec)
         elif norm_type == "protected":
@@ -129,22 +129,24 @@ def _compile_scope(norm: dict, spec: CompiledSpec) -> None:
     _ensure_in_scope_rule(spec)
 
 
-def _compile_forbidden_paths(norm: dict, spec: CompiledSpec) -> None:
-    """Compile forbidden_paths shorthand.
+def _is_glob_pattern(path: str) -> bool:
+    """Check if a path contains glob metacharacters."""
+    return any(c in path for c in "*?[")
+
+
+def _compile_readonly(norm: dict, spec: CompiledSpec) -> None:
+    """Compile readonly shorthand.
 
     Forbids write_file(Path) for any Path that starts with one of the listed prefixes.
-    Emits one cond/5 per path prefix, each guarded by atom_concat directly.
+    Supports glob patterns (e.g., '*.key', '**/*.secret') via path_matches/2.
     """
     role = norm["role"]
     paths = norm.get("paths", [])
     for p in paths:
-        # Normalise: treat as a prefix
-        prefix = p.rstrip("/")
-        if "/" in prefix or "." in prefix:
-            # Use atom_concat for prefix check: atom_concat('prefix', _, Path)
-            quoted = f"'{prefix}'"
-            condition = f"atom_concat({quoted}, _, Path)"
+        if _is_glob_pattern(p):
+            condition = f"path_matches(Path, '{p}')"
         else:
+            prefix = p.rstrip("/")
             quoted = f"'{prefix}'"
             condition = f"atom_concat({quoted}, _, Path)"
         spec.facts.append(
@@ -156,13 +158,16 @@ def _compile_protected(norm: dict, spec: CompiledSpec) -> None:
     """Compile protected shorthand.
 
     Forbids both read_file(Path) and write_file(Path) for paths matching
-    any of the listed prefixes. Emits two cond/5 facts per path.
+    any of the listed prefixes. Supports glob patterns via path_matches/2.
     """
     role = norm["role"]
     for p in norm["paths"]:
-        prefix = p.rstrip("/")
-        quoted = f"'{prefix}'"
-        condition = f"atom_concat({quoted}, _, Path)"
+        if _is_glob_pattern(p):
+            condition = f"path_matches(Path, '{p}')"
+        else:
+            prefix = p.rstrip("/")
+            quoted = f"'{prefix}'"
+            condition = f"atom_concat({quoted}, _, Path)"
         spec.facts.append(
             f"cond({role}, forbidden, read_file(Path), false, {condition})"
         )

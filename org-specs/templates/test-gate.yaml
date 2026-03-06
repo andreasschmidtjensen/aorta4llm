@@ -5,7 +5,7 @@
 # hook detects test success automatically and unlocks the gate.
 #
 # Usage:
-#   aorta init --template test-gate --scope src/ --agent dev
+#   aorta init --template test-gate --scope src/
 
 organization: test_gate
 bash_analysis: true
@@ -37,26 +37,22 @@ norms:
     requires: tests_passing
 
 # Automatically mark tests_passing when a test runner exits successfully.
-# Add or remove patterns to match your test runner.
+# reset_on_file_change: any Write/Edit clears the achievement, requiring re-test.
 achievement_triggers:
   - tool: Bash
     command_pattern: "pytest|python -m pytest|uv run pytest"
     exit_code: 0
     marks: tests_passing
+    reset_on_file_change: true
 
   - tool: Bash
     command_pattern: "npm test|yarn test|pnpm test"
     exit_code: 0
     marks: tests_passing
+    reset_on_file_change: true
 
   - tool: Bash
     command_pattern: "cargo test|go test"
     exit_code: 0
     marks: tests_passing
-
-workflow:
-  - agent: dev
-    role: agent
-    prompt: "{task}. Run the tests before committing — the governance layer will block git commit until they pass."
-    achievements:
-      - task_complete
+    reset_on_file_change: true

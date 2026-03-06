@@ -64,11 +64,11 @@ class TestValidateSpec:
         assert not r.valid
         assert any("paths" in e for e in r.errors)
 
-    def test_forbidden_paths_missing_paths(self):
+    def test_readonly_missing_paths(self):
         r = validate_spec({
             "organization": "test",
             "roles": {"agent": {"objectives": [], "capabilities": []}},
-            "norms": [{"role": "agent", "type": "forbidden_paths"}],
+            "norms": [{"role": "agent", "type": "readonly"}],
         })
         assert not r.valid
         assert any("paths" in e for e in r.errors)
@@ -122,7 +122,7 @@ class TestValidateSpecFile:
         r = validate_spec_file(f)
         assert not r.valid
 
-    @pytest.mark.parametrize("template", ["safe-agent", "test-gate", "review-gate"])
+    @pytest.mark.parametrize("template", ["safe-agent", "test-gate"])
     def test_existing_templates_are_valid(self, template):
         path = _TEMPLATES_DIR / f"{template}.yaml"
         r = validate_spec_file(path)

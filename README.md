@@ -128,36 +128,18 @@ rules:
   - "feature_implemented(F) :- achieved(feature_implemented(F))."
 ```
 
-### 3. Register agents and configure hooks
+### 3. Initialize governance
 
 ```bash
-# Register as implementer scoped to a specific directory
-uv run python -m integration.hooks register \
-    --org-spec org-specs/feature_workflow.yaml \
-    --agent claude-dev --role implementer --scope src/auth/
+# One-command setup — creates org spec, hooks, and registers the agent
+aorta init --template safe-agent --scope src/
+
+# Or for a custom org spec:
+aorta hook register --org-spec org-specs/feature_workflow.yaml \
+    --agent agent --role implementer --scope src/auth/
 ```
 
-Add to your project's `.claude/settings.local.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Write|Edit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/feature_workflow.yaml --agent claude-dev"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Every `Write`, `Edit`, and `NotebookEdit` call now goes through the governance check.
+`aorta init` writes `.claude/settings.local.json` automatically. Every `Write`, `Edit`, `NotebookEdit`, and `Bash` call now goes through the governance check.
 
 ### 4. Start the dashboard (optional)
 

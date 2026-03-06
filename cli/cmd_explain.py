@@ -90,12 +90,21 @@ def _print_norm_detail(norm: dict) -> None:
         print(f"        paths: {norm.get('paths', [])}")
     elif ntype == "protected":
         print(f"        paths: {norm.get('paths', [])}")
-    elif ntype == "forbidden_paths":
+    elif ntype == "readonly":
         print(f"        paths: {norm.get('paths', [])}")
     elif ntype == "forbidden_command":
         print(f"        pattern: '{norm.get('command_pattern', '')}'")
     elif ntype == "required_before":
         print(f"        pattern: '{norm.get('command_pattern', '')}', requires: {norm.get('requires')}")
+
+
+def _path_matches(path: str, pattern: str) -> bool:
+    """Check if a path matches a pattern (prefix or glob)."""
+    if any(c in pattern for c in "*?["):
+        import fnmatch
+        return fnmatch.fnmatch(path, pattern)
+    prefix = pattern.rstrip("/")
+    return path == prefix or path.startswith(prefix)
 
 
 def _check_norm_relevance(norm: dict, role: str, action: str, params: dict) -> dict:
@@ -123,18 +132,17 @@ def _check_norm_relevance(norm: dict, role: str, action: str, params: dict) -> d
         if action not in ("read_file", "write_file"):
             return {"status": "skip", "reason": "protected applies to read/write only"}
         for p in norm.get("paths", []):
-            prefix = p.rstrip("/")
-            if path == prefix or path.startswith(prefix):
-                return {"status": "match", "reason": f"path '{path}' matches protected prefix '{p}'"}
-        return {"status": "no_match", "reason": f"path '{path}' does not match any protected prefix"}
+            if _path_matches(path, p):
+                return {"status": "match", "reason": f"path '{path}' matches protected pattern '{p}'"}
+        return {"status": "no_match", "reason": f"path '{path}' does not match any protected pattern"}
 
-    if ntype == "forbidden_paths":
+    if ntype == "readonly":
         if action != "write_file":
-            return {"status": "skip", "reason": "forbidden_paths only applies to write_file"}
+            return {"status": "skip", "reason": "readonly only applies to write_file"}
         for p in norm.get("paths", []):
-            if path.startswith(p):
-                return {"status": "match", "reason": f"path '{path}' matches forbidden prefix '{p}'"}
-        return {"status": "no_match", "reason": f"path '{path}' does not match any forbidden prefix"}
+            if _path_matches(path, p):
+                return {"status": "match", "reason": f"path '{path}' matches forbidden pattern '{p}'"}
+        return {"status": "no_match", "reason": f"path '{path}' does not match any forbidden pattern"}
 
     if ntype == "forbidden_command":
         if action != "execute_command":

@@ -140,6 +140,9 @@ class GovernanceHook:
         self._soft_block_cache: dict[str, float] = {}  # command_hash -> timestamp
         self._exceptions: list[dict] = []
         self._soft_block_window = extras[3]
+        self._reset_on_file_change: set[str] = {
+            t["marks"] for t in self._triggers if t.get("reset_on_file_change")
+        }
         self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
 
@@ -197,17 +200,23 @@ class GovernanceHook:
             state["exceptions"] = self._exceptions
         self._state_path.write_text(json.dumps(state, indent=2))
 
-    def register_agent(self, agent: str, role: str, scope: str = ""):
+    def clear_transient_state(self):
+        """Clear exceptions and soft block cache. Called during reinit."""
+        self._soft_block_cache.clear()
+        self._exceptions.clear()
+        self._save_state()
+
+    def register_agent(self, agent: str, role: str, scope: str = "",
+                       reinit: bool = False):
         """Register an agent with a role and scope, persisting the event."""
         self._service.register_agent(agent, role, scope)
-        self._events.append({
-            "type": "register", "agent": agent, "role": role, "scope": scope,
-        })
+        event = {"type": "register", "agent": agent, "role": role, "scope": scope}
+        if reinit:
+            event["reinit"] = True
+        self._events.append(event)
         self._save_state()
         if not self._replaying:
-            self._log(
-                {"type": "register", "agent": agent, "role": role, "scope": scope},
-            )
+            self._log(event)
 
     def pre_tool_use(self, context: dict, agent: str | None = None,
                      project_cwd: str | None = None) -> dict:
@@ -229,7 +238,7 @@ class GovernanceHook:
         if not action:
             return {"decision": "approve"}
 
-        agent_id = agent or os.environ.get("AORTA_AGENT") or context.get("agent_name", "default-agent")
+        agent_id = agent or context.get("agent_name", "default-agent")
         role = self._get_agent_role(agent_id)
         if not role:
             reason = f"agent '{agent_id}' is not registered — action denied (fail-closed)"
@@ -295,25 +304,32 @@ class GovernanceHook:
 
         result = self._service.check_permission(agent_id, role, action, params)
 
-        decision = "approve" if result.permitted else "block"
-        event = {
-            "type": "check", "agent": agent_id, "role": role,
-            "action": action, "path": params.get("path", ""),
-            "decision": decision,
-        }
-        if not result.permitted:
-            event["reason"] = result.reason
-            event["severity"] = result.severity
-        self._log(event)
-
         if not result.permitted:
             if result.severity == "soft":
-                return self._handle_soft_block(result.reason, params)
+                soft_result = self._handle_soft_block(result.reason, params)
+                self._log({
+                    "type": "check", "agent": agent_id, "role": role,
+                    "action": action, "path": params.get("path", ""),
+                    "decision": soft_result["decision"],
+                    "reason": result.reason, "severity": "soft",
+                })
+                return soft_result
             reason = result.reason
+            self._log({
+                "type": "check", "agent": agent_id, "role": role,
+                "action": action, "path": params.get("path", ""),
+                "decision": "block", "reason": reason, "severity": "hard",
+            })
             if path:
                 spec_rel = str(self._org_spec_path)
                 reason += f"\n  To grant a one-time exception: aorta allow-once --org-spec {spec_rel} --path {path}"
             return {"decision": "block", "reason": reason}
+
+        self._log({
+            "type": "check", "agent": agent_id, "role": role,
+            "action": action, "path": params.get("path", ""),
+            "decision": "approve",
+        })
 
         # Phase 2: LLM-based Bash command analysis.
         if tool_name == "Bash" and self._bash_analysis and params.get("command"):
@@ -341,6 +357,19 @@ class GovernanceHook:
                      "decision": "approve"},
                 )
 
+        # Reset achievements when a file write is approved (e.g., invalidate tests_passing).
+        if action == "write_file" and self._reset_on_file_change:
+            for mark in list(self._reset_on_file_change):
+                if self._service.clear_achievement(mark):
+                    # Remove from persisted events too
+                    self._events = [
+                        e for e in self._events
+                        if not (e.get("type") == "achieved" and mark in e.get("objectives", []))
+                    ]
+                    self._save_state()
+                    self._log({"type": "achievement_reset", "agent": agent_id,
+                               "mark": mark, "reason": "file changed"})
+
         return {"decision": "approve"}
 
     def post_tool_use(self, context: dict, agent: str | None = None) -> dict:
@@ -358,7 +387,7 @@ class GovernanceHook:
         tool_response = context.get("tool_response", {})
         exit_code = tool_response.get("exit_code", 0)
 
-        agent_id = agent or os.environ.get("AORTA_AGENT") or context.get("agent_name", "default-agent")
+        agent_id = agent or context.get("agent_name", "default-agent")
         role = self._get_agent_role(agent_id)
         if not role:
             return {"status": "ok"}

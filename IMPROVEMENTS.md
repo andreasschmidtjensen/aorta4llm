@@ -29,11 +29,12 @@ Each hook invocation creates a fresh `GovernanceHook` instance.
 cannot work because timestamps aren't persisted to the state file.
 
 ### 4. Silent approval for unregistered agents (fail-open)
-If `--agent` doesn't match a registration, `_get_agent_role()` returns
-None and the hook approves everything. A typo means zero governance.
+If the agent name doesn't match a registration, `_get_agent_role()` returns
+None and the hook approves everything.
+**Fixed**: unregistered agents are now denied (fail-closed). `aorta init` always registers as `agent`.
 
 ### 5. Self-protection missing
-`.aorta/` and `.claude/` weren't in any template's `forbidden_paths`.
+`.aorta/` and `.claude/` weren't in any template's `readonly`.
 The `forbidden_outside` norm blocks them incidentally (they're outside
 `src/`) but a broader scope or removed norm would expose them.
 **Fixed**: added hardcoded protection in hooks.py.
@@ -45,11 +46,10 @@ Generated hooks use `uv run python -m integration.hooks` which only
 resolves if aorta4llm is the active project. Should use the installed
 `aorta` CLI entry point.
 
-### 7. No AORTA_AGENT env var support
-The orchestrator sets `AORTA_AGENT` env var (agent.py:373) but the hook
-doesn't read it. Manual multi-agent (two terminals) is impossible because
-`settings.local.json` hardcodes a single `--agent` value. Reading
-`AORTA_AGENT` from env would fix this.
+### 7. Multi-agent not practical with Claude Code
+Claude Code supports only one `.claude/settings.local.json` per project.
+`aorta init` now hardcodes `agent` as the agent name. Multi-agent requires
+manual `aorta hook register` and separate project directories.
 
 ## What Worked Well
 

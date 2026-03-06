@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 VALID_NORM_TYPES = frozenset([
-    "scope", "protected", "forbidden_paths", "required_before",
+    "scope", "protected", "readonly", "required_before",
     "forbidden_command", "obliged", "forbidden",
 ])
 
@@ -80,8 +80,8 @@ def validate_spec(spec_dict: dict) -> ValidationResult:
             result.errors.append(f"{label}: scope requires 'paths'")
         if norm_type == "protected" and "paths" not in norm:
             result.errors.append(f"{label}: protected requires 'paths'")
-        if norm_type == "forbidden_paths" and "paths" not in norm:
-            result.errors.append(f"{label}: forbidden_paths requires 'paths'")
+        if norm_type == "readonly" and "paths" not in norm:
+            result.errors.append(f"{label}: readonly requires 'paths'")
         if norm_type == "required_before" and "requires" not in norm:
             result.errors.append(f"{label}: required_before requires 'requires'")
         if norm_type == "forbidden_command" and "command_pattern" not in norm:

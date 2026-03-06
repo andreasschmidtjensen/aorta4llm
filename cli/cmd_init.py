@@ -60,9 +60,8 @@ def _merge_hooks(old_hooks: dict, new_aorta_hooks: dict) -> dict:
 
 def add_parser(subparsers):
     p = subparsers.add_parser("init", help="Initialize governance for this project")
-    p.add_argument("--template", help="Template name (safe-agent, test-gate, review-gate)")
+    p.add_argument("--template", help="Template name (safe-agent, test-gate)")
     p.add_argument("--scope", nargs="+", default=["src/"], help="Directory scope(s) for the agent (e.g. --scope src/ tests/)")
-    p.add_argument("--agent", default="dev", help="Agent name")
     p.add_argument("--list-templates", action="store_true", help="List available templates")
     p.add_argument("--strict", action="store_true", help="Also hook Read/Glob/Grep to enforce read restrictions")
     p.add_argument("--reinit", action="store_true", help="Overwrite existing aorta hooks without prompting")
@@ -145,8 +144,8 @@ def run(args):
     events_rel = ".aorta/events.jsonl"
     needs_post = bool(spec.get("achievement_triggers"))
 
-    pre_cmd = f"aorta hook pre-tool-use --org-spec {spec_rel} --agent {args.agent} --events-path {events_rel}"
-    post_cmd = f"aorta hook post-tool-use --org-spec {spec_rel} --agent {args.agent} --events-path {events_rel}"
+    pre_cmd = f"aorta hook pre-tool-use --org-spec {spec_rel} --agent {"agent"} --events-path {events_rel}"
+    post_cmd = f"aorta hook post-tool-use --org-spec {spec_rel} --agent {"agent"} --events-path {events_rel}"
 
     # Write tools matcher — add Read/Glob/Grep if --strict or protected norms exist
     has_protected = any(n.get("type") == "protected" for n in spec.get("norms", []))
@@ -186,21 +185,23 @@ def run(args):
     existing["hooks"] = merged_hooks
     settings_path.write_text(json.dumps(existing, indent=2) + "\n")
     print(f"Wrote hooks config to {settings_path}")
-    if args.strict:
-        print(f"  Strict mode: Read/Glob/Grep also hooked")
+    if has_protected or args.strict:
+        print(f"  Read/Glob/Grep hooked (protected norms detected)")
 
     # 6. Register the agent.
     from integration.hooks import GovernanceHook
     hook = GovernanceHook(org_spec_dest, events_path=events_rel)
-    hook.register_agent(args.agent, role, scope_str)
-    print(f"Registered agent '{args.agent}' as '{role}' with scope '{scope_str}'")
+    if args.reinit:
+        hook.clear_transient_state()
+    hook.register_agent("agent", role, scope_str, reinit=args.reinit)
+    print(f"Registered agent '{"agent"}' as '{role}' with scope '{scope_str}'")
 
     # 7. Summary.
     print(f"\nSetup complete:")
     print(f"  Org spec:  {org_spec_dest}")
     print(f"  Hooks:     {settings_path}")
     print(f"  Events:    {events_rel}")
-    print(f"  Agent:     {args.agent} (role: {role}, scope: {scope_str})")
+    print(f"  Agent:     {"agent"} (role: {role}, scope: {scope_str})")
     if needs_post:
         print(f"  PostToolUse hooks enabled (achievement triggers detected)")
     print(f"\nRun 'aorta validate {org_spec_dest}' to verify the spec.")
