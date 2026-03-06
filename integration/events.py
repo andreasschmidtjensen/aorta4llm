@@ -2,7 +2,7 @@
 
 Events are written as JSON lines to .aorta/events.jsonl. Each event gets
 a timestamp added automatically. The file is the shared data layer for
-the web dashboard, future statusLine, and any other monitoring tool.
+`aorta watch`, and any other monitoring tool.
 """
 
 import json

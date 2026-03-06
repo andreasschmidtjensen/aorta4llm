@@ -65,7 +65,6 @@ def add_parser(subparsers):
     p.add_argument("--list-templates", action="store_true", help="List available templates")
     p.add_argument("--strict", action="store_true", help="Also hook Read/Glob/Grep to enforce read restrictions")
     p.add_argument("--reinit", action="store_true", help="Overwrite existing aorta hooks without prompting")
-    p.add_argument("--with-dashboard", action="store_true", help="Print command to launch the governance dashboard")
     p.set_defaults(func=run)
 
 
@@ -206,6 +205,3 @@ def run(args):
         print(f"  PostToolUse hooks enabled (achievement triggers detected)")
     print(f"\nRun 'aorta validate {org_spec_dest}' to verify the spec.")
 
-    if args.with_dashboard:
-        print(f"\nTo launch the dashboard:")
-        print(f"  uv run --extra dashboard python -m dashboard.server --org-spec {org_spec_dest} --events {events_rel}")

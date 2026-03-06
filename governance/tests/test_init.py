@@ -35,7 +35,6 @@ class TestRunInit:
         a.list_templates = False
         a.strict = False
         a.reinit = False
-        a.with_dashboard = False
         return a
 
     def test_init_creates_org_spec(self, tmp_path, monkeypatch):

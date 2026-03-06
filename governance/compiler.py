@@ -200,10 +200,7 @@ def _compile_required_before(norm: dict, spec: CompiledSpec) -> None:
     # Helper rule: matches when command contains the pattern as a substring
     quoted = f"'{command_pattern}'"
     spec.rules.append(
-        f"{helper}(Cmd) :- atom_concat({quoted}, _, Cmd)."
-    )
-    spec.rules.append(
-        f"{helper}(Cmd) :- atom_concat(_, {quoted}, Cmd)."
+        f"{helper}(Cmd) :- str_contains(Cmd, {quoted})."
     )
 
 

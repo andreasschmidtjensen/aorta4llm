@@ -63,12 +63,19 @@ def _format_event(event: dict) -> str | None:
             if len(short_reason) > 80:
                 short_reason = short_reason[:77] + "..."
             line += f" — {short_reason}"
+        if decision == "approve" and reason:
+            line += f" — {reason}"
         return line
 
     if etype == "achieved":
         agent = event.get("agent", "?")
         mark = event.get("mark", "?")
         return f"{ts} \033[35m★\033[0m {agent} achieved {mark}"
+
+    if etype == "achievement_reset":
+        agent = event.get("agent", "?")
+        mark = event.get("mark", "?")
+        return f"{ts} \033[33m↺\033[0m {agent} reset {mark}"
 
     if etype == "bash_analysis":
         decision = event.get("decision", "?")

@@ -15,15 +15,12 @@ dependencies = [
 dev = [
     "pytest>=7.0",
 ]
-dashboard = [
-    "flask>=3.0",
-]
 
 [project.scripts]
 aorta = "cli.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["governance", "integration", "dashboard", "cli"]
+packages = ["governance", "integration", "cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["governance/tests"]

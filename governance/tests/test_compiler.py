@@ -211,7 +211,8 @@ class TestHighLevelNorms:
             }]
         })
         helper_rules = [r for r in spec.rules if "git commit" in r]
-        assert len(helper_rules) == 2  # prefix + suffix match
+        assert len(helper_rules) == 1  # str_contains substring match
+        assert "str_contains" in helper_rules[0]
 
     def test_required_before_stable_helper_name(self):
         # Same pattern → same helper name across two compilations

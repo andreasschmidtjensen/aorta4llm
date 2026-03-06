@@ -22,30 +22,20 @@ aorta4llm moves governance outside the context window. An organizational spec de
 ## See it in action
 
 ```bash
-uv run python examples/obligation_demo/demo.py
+aorta init --template safe-agent --scope src/ tests/
 ```
 
+Then in Claude Code:
+
 ```
-  Act 1: The Architecture Gate
-
-  BLOCK  write_file(src/auth/handler.py)
-         reason: prohibition active — architecture not reviewed for scope
-
-  Act 2: Architecture Review Lifts the Gate
-
-  -> Achieved: architecture_reviewed('src/auth/')
-  PERMIT write_file(src/auth/handler.py)
-
-  Act 3: The Deadline Violation
-
-  -> Obligation ACTIVATED: obliged code_reviewed(auth)
-     deadline: review_deadline(auth)
-
-  !! VIOLATION DETECTED: obliged code_reviewed(auth)
-     The reviewer failed to complete review before the deadline.
+> Create src/models/task.py with a Task dataclass     → APPROVED (in scope)
+> Create a README.md at the project root               → BLOCKED (outside scope)
+> Read .env                                            → BLOCKED (protected)
+> Run pytest                                           → APPROVED
+> git commit -m 'feat: add task model'                 → SOFT BLOCK (user must confirm)
 ```
 
-Same file, same agent, same role — permitted after organizational state changed. Then an obligation tracked over time, a missed deadline, and a recorded violation. No JSON allowlist can do this.
+Every block is deterministic — the engine decides, not the LLM. Soft blocks require one retry to confirm intent.
 
 ## Prerequisites
 
@@ -62,145 +52,57 @@ The pure-Python engine requires no external dependencies beyond PyYAML.
 
 ```bash
 uv pip install -e "/path/to/aorta4llm"
-
-# With dashboard (adds Flask):
-uv pip install -e "/path/to/aorta4llm[dashboard]"
-
 ```
 
-### 2. Define your organization
-
-Create an org spec YAML file. This example defines three roles for a feature development workflow:
-
-```yaml
-organization: feature_workflow
-
-roles:
-  architect:
-    objectives:
-      - system_design_complete(Feature)
-    capabilities:
-      - read_file
-      - write_file
-      - spawn_agent
-
-  implementer:
-    objectives:
-      - feature_implemented(Feature)
-      - tests_passing(Feature)
-    capabilities:
-      - read_file
-      - write_file
-      - execute_command
-
-  reviewer:
-    objectives:
-      - code_reviewed(Feature)
-    capabilities:
-      - read_file
-
-norms:
-  # Implementer must not modify files outside assigned scope
-  - role: implementer
-    type: forbidden
-    objective: write_file(Path)
-    deadline: false
-    condition: not(in_scope(Path, S))
-
-  # Implementer must have tests passing before requesting review
-  - role: implementer
-    type: obliged
-    objective: tests_passing(Feature)
-    deadline: review_requested(Feature)
-    condition: feature_implemented(Feature)
-
-  # Reviewer must not modify source code
-  - role: reviewer
-    type: forbidden
-    objective: write_file(Path)
-    deadline: false
-    condition: is_source_file(Path)
-
-rules:
-  - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
-  - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
-  - "is_source_file(Path) :- atom_concat(_, '.ts', Path)."
-  - "feature_implemented(F) :- achieved(feature_implemented(F))."
-```
-
-### 3. Initialize governance
+### 2. Initialize governance
 
 ```bash
 # One-command setup — creates org spec, hooks, and registers the agent
-aorta init --template safe-agent --scope src/
-
-# Or for a custom org spec:
-aorta hook register --org-spec org-specs/feature_workflow.yaml \
-    --agent agent --role implementer --scope src/auth/
+aorta init --template safe-agent --scope src/ tests/
 ```
 
-`aorta init` writes `.claude/settings.local.json` automatically. Every `Write`, `Edit`, `NotebookEdit`, and `Bash` call now goes through the governance check.
+This creates `.aorta/safe-agent.yaml` and `.claude/settings.local.json` with hooks configured. Every `Write`, `Edit`, `Read`, and `Bash` call now goes through the governance check.
 
-### 4. Start the dashboard (optional)
+### 3. Org spec anatomy
 
-```bash
-uv run python -m dashboard.server --org-spec org-specs/feature_workflow.yaml --port 5111
-```
-
-Open **http://localhost:5111** — registered agents, live permission checks, active obligations, violation tracking.
-
-## Designing org specs
-
-The org spec YAML follows the AORTA metamodel:
-
-### Roles
-
-Each role has **objectives** (what it aims to achieve) and **capabilities** (what actions it can perform):
+The generated spec uses shorthand norm types that compile to the underlying engine:
 
 ```yaml
+organization: safe_agent
+bash_analysis: true
+
 roles:
-  my_role:
-    objectives:
-      - task_complete(Item)
-    capabilities:
-      - read_file
-      - write_file
+  agent:
+    objectives: [task_complete]
+    capabilities: [read_file, write_file, execute_command]
+
+norms:
+  # Block writes outside assigned scope
+  - role: agent
+    type: scope
+    paths: [src/, tests/]
+
+  # Block reads AND writes to secrets
+  - role: agent
+    type: protected
+    paths: [.env, .env.local, secrets/]
+
+  # Block writes to config (reads still allowed)
+  - role: agent
+    type: readonly
+    paths: [config/]
+
+  # Soft-block git commit/push (agent must confirm with user)
+  - role: agent
+    type: forbidden_command
+    command_pattern: "git commit"
+    severity: soft
 ```
 
-### Norms
+### 4. Templates
 
-Two types:
-
-**Prohibitions** — block an action when a condition holds:
-
-```yaml
-- role: implementer
-  type: forbidden
-  objective: write_file(Path)
-  deadline: false
-  condition: not(in_scope(Path, S))
-```
-
-**Obligations** — require something to be achieved by a deadline:
-
-```yaml
-- role: implementer
-  type: obliged
-  objective: tests_passing(Feature)
-  deadline: review_requested(Feature)
-  condition: feature_implemented(Feature)
-```
-
-### Rules
-
-Rules define how conditions are evaluated. Variables are shared between the norm's objective and condition — when a concrete action unifies with the objective pattern, variables bind throughout:
-
-```yaml
-rules:
-  - "in_scope(Path, Scope) :- current_scope(Scope), atom_concat(Scope, _, Path)."
-  - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
-  - "feature_implemented(F) :- achieved(feature_implemented(F))."
-```
+- **safe-agent** — Single agent with scope, protected paths, readonly paths, soft-blocked git operations
+- **test-gate** — Like safe-agent, plus `git commit` is hard-blocked until `pytest` passes (achievement triggers)
 
 ## How it works
 
@@ -208,7 +110,7 @@ rules:
 2. The **governance engine** (pure Python) evaluates norms deterministically — no LLM involved in enforcement
 3. **Claude Code hooks** intercept tool calls, translate them to governance actions, and check permissions before execution
 4. **Prohibitions with variables** (like `write_file(Path)`) are evaluated at check time — the concrete file path binds the variable, propagating through the condition
-5. **Event log** (`.aorta/events.jsonl`) records all checks for the dashboard and auditing
+5. **Event log** (`.aorta/events.jsonl`) records all checks for auditing and `aorta watch`
 
 ## Project structure
 
@@ -231,12 +133,8 @@ cli/
   cmd_init.py        Project scaffolding from templates
   cmd_validate.py    Org spec validation
   cmd_dry_run.py     Test governance checks offline
-dashboard/
-  server.py          Flask web dashboard
-  static/index.html  Dashboard UI
-org-specs/           Example organizational specifications
-  templates/         Templates for aorta init
-examples/            Runnable demos
+org-specs/
+  templates/         Templates for aorta init (safe-agent, test-gate)
 docs/
   getting-started.md Hands-on setup and usage guide
 ```

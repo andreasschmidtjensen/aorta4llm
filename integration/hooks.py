@@ -10,20 +10,20 @@ to reconstruct the governance service state.
 Usage (CLI):
     # Register an agent
     python -m integration.hooks register \\
-        --org-spec org-specs/three_role_workflow.yaml \\
-        --agent impl-1 --role implementer --scope src/auth/
+        --org-spec .aorta/safe-agent.yaml \\
+        --agent dev --role agent --scope src/
 
     # PreToolUse hook (reads tool context from stdin)
-    echo '{"tool_name":"Write","tool_input":{"file_path":"src/api/x.py"}}' | \\
+    echo '{"tool_name":"Write","tool_input":{"file_path":"config/x.py"}}' | \\
         python -m integration.hooks pre-tool-use \\
-        --org-spec org-specs/three_role_workflow.yaml --agent impl-1
+        --org-spec .aorta/safe-agent.yaml --agent dev
 
 Claude Code hook configuration (.claude/settings.local.json):
     {
       "hooks": {
         "PreToolUse": [{
           "matcher": "Write|Edit|Bash",
-          "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/three_role_workflow.yaml --agent $AGENT_NAME"
+          "command": "uv run python -m integration.hooks pre-tool-use --org-spec .aorta/safe-agent.yaml --agent dev"
         }]
       }
     }
@@ -53,7 +53,6 @@ TOOL_ACTION_MAP = {
     "Edit": "write_file",
     "Read": "read_file",
     "Bash": "execute_command",
-    "Agent": "spawn_agent",
     "Glob": "read_file",
     "Grep": "read_file",
     "NotebookEdit": "write_file",

@@ -138,6 +138,9 @@ def _heuristic_analyze(command: str) -> BashAnalysis | None:
         except ValueError:
             return None  # Can't parse — ambiguous.
 
+    # Filter out /dev/null — not a real file write.
+    writes = [w for w in writes if w != "/dev/null"]
+
     if writes:
         return BashAnalysis(
             writes=writes,

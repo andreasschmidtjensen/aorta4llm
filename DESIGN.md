@@ -128,7 +128,7 @@ roles:
     capabilities:
       - read_file
       - write_file
-      - spawn_agent
+      - write_file
 
   implementer:
     objectives:
@@ -294,10 +294,9 @@ aorta-llm/
 │       └── test_service.py
 ├── integration/               # Claude Code integration
 │   └── hooks.py               # Tool call interception layer
-├── org-specs/                 # Example organizational specifications
-│   └── code_review.yaml
-└── examples/                  # Example usage scenarios
-    └── three_role_demo/
+├── org-specs/                 # Organizational specifications
+│   └── templates/             # Templates for aorta init
+└── docs/                      # Documentation
 ```
 
 ## Implementation Plan

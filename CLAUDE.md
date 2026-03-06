@@ -22,7 +22,7 @@ uv run pytest -v
 - **integration/hooks.py**: Claude Code hook integration — PreToolUse/PostToolUse handlers, CLI entry point, event-sourced state persistence, allow-once exceptions, system prompt injection from obligations.
 - **cli/**: CLI commands — init, validate, dry-run, status, reset, allow-once, explain, hook.
 - **org-specs/**: YAML organizational specifications following the metamodel schema from DESIGN.md.
-- **examples/three_role_demo/demo.py**: Runnable three-role workflow simulation.
+- **org-specs/templates/**: YAML templates for common governance patterns (safe-agent, test-gate).
 
 ## Key Design Constraints
 
@@ -53,8 +53,6 @@ This creates `.aorta/safe-agent.yaml` and `.claude/settings.local.json` with hoo
 Grant temporary exceptions: `aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env`
 
 Debug norm evaluation: `aorta explain --org-spec .aorta/safe-agent.yaml --tool Write --path config/x.py --agent agent --role agent`
-
-Run the demo: `uv run python examples/three_role_demo/demo.py`
 
 ## Reference
 

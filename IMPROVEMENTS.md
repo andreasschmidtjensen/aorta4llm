@@ -58,6 +58,6 @@ manual `aorta hook register` and separate project directories.
 - `aorta dry-run` excellent for testing specs
 - Governance correctly blocked .env, config/, out-of-scope writes
 - Bash heuristic caught `cp`, `mv`, `echo >` redirects
-- Event log + dashboard showed all decisions in real time
+- Event log + `aorta watch` showed all decisions in real time
 - Claude itself respected governance blocks and explained them to the user
 - Claude refused to edit its own policy (by judgment, now also by enforcement)

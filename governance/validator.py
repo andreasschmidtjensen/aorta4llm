@@ -13,7 +13,7 @@ VALID_NORM_TYPES = frozenset([
 VALID_SEVERITIES = frozenset(["hard", "soft"])
 
 VALID_CAPABILITIES = frozenset([
-    "read_file", "write_file", "execute_command", "spawn_agent",
+    "read_file", "write_file", "execute_command",
 ])
 
 

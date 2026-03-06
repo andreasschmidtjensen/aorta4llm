@@ -177,17 +177,6 @@ aorta reset --org-spec .aorta/safe-agent.yaml
 
 Clears registered agents, achievements, and events. Use `--keep-events` to preserve the event log. Agents must be re-registered afterward.
 
-## Dashboard
-
-```bash
-uv run --extra dashboard python -m dashboard.server \
-  --org-spec .aorta/safe-agent.yaml --events .aorta/events.jsonl --port 5111
-```
-
-Or pass `--with-dashboard` to `aorta init` to get the command printed for you.
-
-Open http://localhost:5111. Shows permission checks, bash analysis events, norm changes, and per-agent detail. Events are tagged with `org_spec` for filtering across projects.
-
 ## Watch (live event tail)
 
 Monitor governance events in real-time from a separate terminal:
