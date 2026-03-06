@@ -56,6 +56,8 @@ SWI-Prolog is **optional** — the default pure-Python engine requires no extern
 
 ## Quick start
 
+> **New to aorta4llm?** See [Getting Started](docs/getting-started.md) for a hands-on guide covering the CLI, shorthand norm types, bash analysis, soft/hard blocks, and dry-run mode.
+
 ### 1. Install
 
 ```bash
@@ -253,11 +255,18 @@ governance/
   engine_types.py    Shared data types
   compiler.py        YAML org specs -> facts/rules
   service.py         High-level API with engine selection
+  validator.py       Org spec schema validation
+  bash_analyzer.py   Heuristic + LLM bash command analysis
   prolog/            Prolog source files (NC phase, OG phase)
-  tests/             pytest test suite (156 tests)
+  tests/             pytest test suite (209 tests)
 integration/
   hooks.py           Claude Code hook handlers + CLI
   events.py          JSONL event logger
+cli/
+  main.py            Unified CLI (aorta init, validate, dry-run)
+  cmd_init.py        Project scaffolding from templates
+  cmd_validate.py    Org spec validation
+  cmd_dry_run.py     Test governance checks offline
 dashboard/
   server.py          Flask web dashboard
   static/index.html  Dashboard UI
@@ -266,7 +275,10 @@ orchestrator/
   agent.py           Claude Code CLI subprocess runner
   prompts.py         Role-appropriate system prompt builder
 org-specs/           Example organizational specifications
+  templates/         Templates for aorta init
 examples/            Runnable demos
+docs/
+  getting-started.md Hands-on setup and usage guide
 ```
 
 ## Architecture and theory
