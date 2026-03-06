@@ -1,5 +1,6 @@
 """YAML -> Prolog fact compiler for organizational specifications."""
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,14 +63,109 @@ def _compile_dependencies(deps: list, spec: CompiledSpec) -> None:
 
 
 def _compile_norms(norms: list, spec: CompiledSpec) -> None:
-    """Compile conditional norms to cond/5 facts."""
+    """Compile conditional norms to cond/5 facts.
+
+    Handles both raw Prolog-syntax norms and high-level shorthand types:
+    - forbidden_outside: forbid writes outside a given directory prefix
+    - forbidden_paths: forbid writes matching any of a list of path prefixes
+    - required_before: block a command until an achievement exists
+    """
     for norm in norms:
-        role = norm["role"]
-        deon = norm["type"]  # 'obliged' or 'forbidden'
-        objective = norm["objective"]
-        deadline = norm.get("deadline", "false")
-        condition = norm.get("condition", "true")
-        spec.facts.append(f"cond({role}, {deon}, {objective}, {deadline}, {condition})")
+        norm_type = norm["type"]
+
+        if norm_type == "forbidden_outside":
+            _compile_forbidden_outside(norm, spec)
+        elif norm_type == "forbidden_paths":
+            _compile_forbidden_paths(norm, spec)
+        elif norm_type == "required_before":
+            _compile_required_before(norm, spec)
+        else:
+            # Raw syntax: obliged / forbidden with explicit objective + condition
+            role = norm["role"]
+            deon = norm_type  # 'obliged' or 'forbidden'
+            objective = norm["objective"]
+            deadline = norm.get("deadline", "false")
+            condition = norm.get("condition", "true")
+            spec.facts.append(
+                f"cond({role}, {deon}, {objective}, {deadline}, {condition})"
+            )
+
+
+def _compile_forbidden_outside(norm: dict, spec: CompiledSpec) -> None:
+    """Compile forbidden_outside shorthand.
+
+    Forbids write_file(Path) for any Path that does not start with `path`.
+    Emits one cond/5 fact and auto-includes the in_scope/2 rule if missing.
+    """
+    role = norm["role"]
+    path = norm["path"].rstrip("/") + "/"
+    quoted = f"'{path}'"
+    spec.facts.append(
+        f"cond({role}, forbidden, write_file(Path), false, "
+        f"not(in_scope(Path, {quoted})))"
+    )
+    _ensure_in_scope_rule(spec)
+
+
+def _compile_forbidden_paths(norm: dict, spec: CompiledSpec) -> None:
+    """Compile forbidden_paths shorthand.
+
+    Forbids write_file(Path) for any Path that starts with one of the listed prefixes.
+    Emits one cond/5 per path prefix, each guarded by atom_concat directly.
+    """
+    role = norm["role"]
+    paths = norm.get("paths", [])
+    for p in paths:
+        # Normalise: treat as a prefix
+        prefix = p.rstrip("/")
+        if "/" in prefix or "." in prefix:
+            # Use atom_concat for prefix check: atom_concat('prefix', _, Path)
+            quoted = f"'{prefix}'"
+            condition = f"atom_concat({quoted}, _, Path)"
+        else:
+            quoted = f"'{prefix}'"
+            condition = f"atom_concat({quoted}, _, Path)"
+        spec.facts.append(
+            f"cond({role}, forbidden, write_file(Path), false, {condition})"
+        )
+
+
+def _compile_required_before(norm: dict, spec: CompiledSpec) -> None:
+    """Compile required_before shorthand.
+
+    Blocks an execute_command(Cmd) unless a given achievement exists.
+    Uses a helper rule named after a hash of the command_pattern to avoid collisions.
+    """
+    role = norm["role"]
+    command_pattern = norm.get("command_pattern", "")
+    requires = norm["requires"]
+
+    # Generate a stable short name from the pattern
+    h = hashlib.sha1(command_pattern.encode()).hexdigest()[:6]
+    helper = f"cmd_matches_{h}"
+
+    # cond/5: block execute_command(Cmd) when helper matches but achievement missing
+    # Use parenthesized conjunction (A, B) which the terms parser understands
+    condition = f"({helper}(Cmd), not(achieved({requires})))"
+    spec.facts.append(
+        f"cond({role}, forbidden, execute_command(Cmd), false, {condition})"
+    )
+
+    # Helper rule: matches when command contains the pattern as a substring
+    quoted = f"'{command_pattern}'"
+    spec.rules.append(
+        f"{helper}(Cmd) :- atom_concat({quoted}, _, Cmd)."
+    )
+    spec.rules.append(
+        f"{helper}(Cmd) :- atom_concat(_, {quoted}, Cmd)."
+    )
+
+
+def _ensure_in_scope_rule(spec: CompiledSpec) -> None:
+    """Add the standard in_scope/2 rule if not already present."""
+    rule = "in_scope(Path, Scope) :- atom_concat(Scope, _, Path)."
+    if rule not in spec.rules:
+        spec.rules.append(rule)
 
 
 def _compile_rules(rules: list, spec: CompiledSpec) -> None:

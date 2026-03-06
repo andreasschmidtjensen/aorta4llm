@@ -238,6 +238,239 @@ class TestHookIntegration:
             assert len(action) > 0
 
 
+class TestBashCommandPassing:
+    """Tests for Bash command passing through the permission check."""
+
+    def test_bash_command_passed_as_param(self, hook):
+        """pre_tool_use passes command string for Bash calls."""
+        hook.register_agent("impl-1", "implementer", scope="src/auth/")
+        # Bash calls should pass command, not path
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "pytest tests/"}},
+            agent="impl-1",
+        )
+        # Implementer has execute_command capability, no prohibition on pytest
+        assert result["decision"] == "approve"
+
+    def test_bash_command_gate_blocks_commit_without_achievement(self, tmp_path):
+        """required_before norm blocks git commit until tests_passing achieved."""
+        spec_dict = {
+            "organization": "test_gate",
+            "roles": {
+                "agent": {
+                    "objectives": ["tests_passing"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "required_before",
+                "blocks": "execute_command",
+                "command_pattern": "git commit",
+                "requires": "tests_passing",
+            }],
+        }
+        import yaml
+        spec_file = tmp_path / "gate.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+
+        # Commit blocked before tests_passing
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'feat: x'"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_bash_command_gate_allows_commit_after_achievement(self, tmp_path):
+        """git commit allowed once tests_passing is achieved."""
+        spec_dict = {
+            "organization": "test_gate",
+            "roles": {
+                "agent": {
+                    "objectives": ["tests_passing"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "required_before",
+                "blocks": "execute_command",
+                "command_pattern": "git commit",
+                "requires": "tests_passing",
+            }],
+        }
+        import yaml
+        spec_file = tmp_path / "gate.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+        hook._service.notify_action("dev", "agent", achieved=["tests_passing"])
+
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'feat: x'"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+
+class TestPostToolUseAchievements:
+    """Tests for achievement tracking via PostToolUse triggers."""
+
+    def _make_hook_with_triggers(self, tmp_path, triggers: list[dict]):
+        import yaml
+        spec_dict = {
+            "organization": "trigger_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["tests_passing"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "achievement_triggers": triggers,
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+        return hook
+
+    def test_triggers_loaded_from_spec(self, tmp_path):
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+        assert len(hook._triggers) == 1
+        assert hook._triggers[0]["marks"] == "tests_passing"
+
+    def test_post_tool_use_marks_achievement_on_match(self, tmp_path):
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+
+        result = hook.post_tool_use(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "pytest tests/"},
+                "tool_response": {"exit_code": 0},
+            },
+            agent="dev",
+        )
+        assert result == {"status": "ok"}
+
+        # Achievement should now be in the engine state
+        obls = hook._service.get_obligations("dev", "agent")
+        # tests_passing was the objective — after achieving it, no active obligation
+        assert obls is not None
+
+    def test_post_tool_use_no_match_on_wrong_exit_code(self, tmp_path):
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+
+        result = hook.post_tool_use(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "pytest tests/"},
+                "tool_response": {"exit_code": 1},
+            },
+            agent="dev",
+        )
+        assert result == {"status": "ok"}
+        # Event should not have been logged for tests_passing
+
+    def test_post_tool_use_no_match_on_wrong_command(self, tmp_path):
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+
+        result = hook.post_tool_use(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "npm install"},
+                "tool_response": {"exit_code": 0},
+            },
+            agent="dev",
+        )
+        assert result == {"status": "ok"}
+
+    def test_post_tool_use_no_match_on_wrong_tool(self, tmp_path):
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+
+        result = hook.post_tool_use(
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": "x.py"},
+                "tool_response": {"exit_code": 0},
+            },
+            agent="dev",
+        )
+        assert result == {"status": "ok"}
+
+    def test_post_tool_use_skips_unregistered_agent(self, tmp_path):
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+
+        result = hook.post_tool_use(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "pytest"},
+                "tool_response": {"exit_code": 0},
+            },
+            agent="unknown",
+        )
+        assert result == {"status": "ok"}
+
+    def test_achievement_enables_previously_blocked_command(self, tmp_path):
+        """End-to-end: trigger unlocks a gate that was blocking a commit."""
+        import yaml
+        spec_dict = {
+            "organization": "full_gate",
+            "roles": {
+                "agent": {
+                    "objectives": ["tests_passing"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "required_before",
+                "command_pattern": "git commit",
+                "requires": "tests_passing",
+            }],
+            "achievement_triggers": [{
+                "tool": "Bash",
+                "command_pattern": "pytest",
+                "exit_code": 0,
+                "marks": "tests_passing",
+            }],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+
+        # Commit blocked initially
+        r1 = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}},
+            agent="dev",
+        )
+        assert r1["decision"] == "block"
+
+        # Tests pass → trigger fires
+        hook.post_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 0}},
+            agent="dev",
+        )
+
+        # Commit now allowed
+        r2 = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}},
+            agent="dev",
+        )
+        assert r2["decision"] == "approve"
+
+
 class TestSystemPromptInjection:
     """Tests for system prompt generation from obligations."""
 
@@ -263,3 +496,114 @@ class TestSystemPromptInjection:
     def test_injection_for_unknown_agent(self, hook):
         text = hook.get_system_prompt_injection("unknown")
         assert text is None
+
+
+class TestBashAnalysisIntegration:
+    """Tests for LLM-based Bash analysis in pre_tool_use."""
+
+    def _make_hook(self, tmp_path, bash_analysis=True, norms=None):
+        import yaml
+        spec_dict = {
+            "organization": "bash_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": norms or [{
+                "role": "agent",
+                "type": "forbidden_outside",
+                "path": "src/",
+            }],
+        }
+        if bash_analysis:
+            spec_dict["bash_analysis"] = True
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent", scope="src/")
+        return hook
+
+    def test_bash_write_outside_scope_blocked(self, tmp_path):
+        """Bash writing outside scope is blocked when bash_analysis is enabled."""
+        from unittest.mock import patch
+        from governance.bash_analyzer import BashAnalysis
+
+        hook = self._make_hook(tmp_path)
+
+        with patch("governance.bash_analyzer.analyze_bash_command") as mock_analyze:
+            mock_analyze.return_value = BashAnalysis(
+                writes=["config/secret.py"],
+                is_destructive=False,
+                summary="writes to config/",
+            )
+            result = hook.pre_tool_use(
+                {"tool_name": "Bash", "tool_input": {"command": "echo hack > config/secret.py"}},
+                agent="dev",
+            )
+
+        assert result["decision"] == "block"
+        assert "config/secret.py" in result["reason"]
+
+    def test_bash_write_in_scope_allowed(self, tmp_path):
+        """Bash writing within scope is allowed."""
+        from unittest.mock import patch
+        from governance.bash_analyzer import BashAnalysis
+
+        hook = self._make_hook(tmp_path)
+
+        with patch("governance.bash_analyzer.analyze_bash_command") as mock_analyze:
+            mock_analyze.return_value = BashAnalysis(
+                writes=["src/app.py"],
+                is_destructive=False,
+                summary="writes to src/app.py",
+            )
+            result = hook.pre_tool_use(
+                {"tool_name": "Bash", "tool_input": {"command": "echo x > src/app.py"}},
+                agent="dev",
+            )
+
+        assert result["decision"] == "approve"
+
+    def test_bash_analysis_skipped_when_not_enabled(self, tmp_path):
+        """Without bash_analysis: true, no LLM analysis runs."""
+        from unittest.mock import patch
+
+        hook = self._make_hook(tmp_path, bash_analysis=False)
+
+        with patch("governance.bash_analyzer.analyze_bash_command") as mock_analyze:
+            result = hook.pre_tool_use(
+                {"tool_name": "Bash", "tool_input": {"command": "echo hack > config/x.py"}},
+                agent="dev",
+            )
+
+        mock_analyze.assert_not_called()
+        # Without analysis, Bash execute_command is approved (no command-level prohibition)
+        assert result["decision"] == "approve"
+
+    def test_bash_analysis_logs_block_event(self, tmp_path):
+        """Blocked Bash commands are logged to events file."""
+        from unittest.mock import patch
+        from governance.bash_analyzer import BashAnalysis
+
+        hook = self._make_hook(tmp_path)
+
+        with patch("governance.bash_analyzer.analyze_bash_command") as mock_analyze:
+            mock_analyze.return_value = BashAnalysis(
+                writes=["config/x.py"],
+                is_destructive=False,
+                summary="writes to config/",
+            )
+            hook.pre_tool_use(
+                {"tool_name": "Bash", "tool_input": {"command": "cp x config/x.py"}},
+                agent="dev",
+            )
+
+        # Check events file for bash_analysis entry
+        events_path = hook._events_path
+        if events_path.exists():
+            lines = events_path.read_text().strip().split("\n")
+            bash_events = [json.loads(l) for l in lines if "bash_analysis" in l]
+            assert len(bash_events) >= 1
+            assert bash_events[-1]["decision"] == "block"

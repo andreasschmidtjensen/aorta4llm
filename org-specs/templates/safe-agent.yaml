@@ -1,0 +1,58 @@
+# safe-agent.yaml — Single governed agent with protected directories.
+#
+# Use this when you want a single Claude agent to work freely within a
+# defined scope but be physically blocked from touching sensitive files.
+#
+# Usage:
+#   Register the agent before starting:
+#     uv run python -m integration.hooks register \
+#         --org-spec org-specs/templates/safe-agent.yaml \
+#         --agent my-agent --role agent --scope src/
+#
+#   Configure hooks in .claude/settings.local.json:
+#     {
+#       "hooks": {
+#         "PreToolUse": [{
+#           "matcher": "Write|Edit|NotebookEdit|Bash",
+#           "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/templates/safe-agent.yaml --agent my-agent"
+#         }]
+#       }
+#     }
+
+organization: safe_agent
+bash_analysis: true
+
+roles:
+  agent:
+    objectives:
+      - task_complete
+    capabilities:
+      - read_file
+      - write_file
+      - execute_command
+
+norms:
+  # Block writes outside the assigned scope (set at registration time).
+  # Change 'src/' to the directory you want the agent to work in.
+  - role: agent
+    type: forbidden_outside
+    path: src/
+
+  # Block writes to configuration and secrets.
+  # Add more paths as needed.
+  - role: agent
+    type: forbidden_paths
+    paths:
+      - .env
+      - .env.local
+      - config/
+      - secrets/
+      - .ssh/
+
+workflow:
+  - agent: my-agent
+    role: agent
+    scope: src/
+    prompt: "{task}"
+    achievements:
+      - task_complete

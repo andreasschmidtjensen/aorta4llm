@@ -30,10 +30,14 @@ Claude Code hook configuration (.claude/settings.local.json):
 """
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
+
+import yaml
 
 from governance.service import GovernanceService
 from integration.events import log_event
@@ -51,6 +55,12 @@ TOOL_ACTION_MAP = {
 }
 
 
+def _default_state_path(org_spec_path: str | Path) -> Path:
+    """Return ~/.aorta/state-<hash>.json keyed to the org spec's absolute path."""
+    digest = hashlib.sha256(str(Path(org_spec_path).resolve()).encode()).hexdigest()[:12]
+    return Path.home() / ".aorta" / f"state-{digest}.json"
+
+
 class GovernanceHook:
     """Hook handler for Claude Code integration.
 
@@ -58,17 +68,27 @@ class GovernanceHook:
     so that state survives across individual hook invocations.
     """
 
-    def __init__(self, org_spec_path: str | Path, state_path: str | Path = ".aorta/state.json",
+    def __init__(self, org_spec_path: str | Path, state_path: str | Path | None = None,
                  events_path: str | Path | None = None, engine: str = "auto"):
         self._org_spec_path = Path(org_spec_path)
-        self._state_path = Path(state_path)
+        self._state_path = Path(state_path) if state_path else _default_state_path(org_spec_path)
         self._events_path = Path(events_path) if events_path else (
             self._state_path.parent / "events.jsonl"
         )
         self._service = GovernanceService(self._org_spec_path, engine=engine)
+        self._triggers, self._bash_analysis = self._load_spec_extras(self._org_spec_path)
         self._events: list[dict] = []
         self._replaying = False
         self._replay_state()
+
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool]:
+        """Load achievement_triggers and bash_analysis flag from the org spec."""
+        try:
+            with open(org_spec_path) as f:
+                spec = yaml.safe_load(f)
+            return spec.get("achievement_triggers", []), bool(spec.get("bash_analysis", False))
+        except Exception:
+            return [], False
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state."""
@@ -139,19 +159,22 @@ class GovernanceHook:
             return {"decision": "approve"}
 
         params = {}
-        raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
-        if raw_path and os.path.isabs(raw_path):
-            # Claude Code sends absolute paths; make relative to project root.
-            # Try explicit cwd, then context cwd, then process cwd.
-            for candidate in [project_cwd, context.get("cwd", ""), os.getcwd()]:
-                if not candidate:
-                    continue
-                prefix = candidate.rstrip("/") + "/"
-                if raw_path.startswith(prefix):
-                    raw_path = raw_path[len(prefix):]
-                    break
-        if raw_path:
-            params["path"] = raw_path
+        if tool_name == "Bash":
+            params["command"] = tool_input.get("command", "")
+        else:
+            raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+            if raw_path and os.path.isabs(raw_path):
+                # Claude Code sends absolute paths; make relative to project root.
+                # Try explicit cwd, then context cwd, then process cwd.
+                for candidate in [project_cwd, context.get("cwd", ""), os.getcwd()]:
+                    if not candidate:
+                        continue
+                    prefix = candidate.rstrip("/") + "/"
+                    if raw_path.startswith(prefix):
+                        raw_path = raw_path[len(prefix):]
+                        break
+            if raw_path:
+                params["path"] = raw_path
 
         result = self._service.check_permission(agent_id, role, action, params)
 
@@ -165,18 +188,86 @@ class GovernanceHook:
             event["reason"] = result.reason
         log_event(event, self._events_path)
 
-        if result.permitted:
-            return {"decision": "approve"}
-        return {
-            "decision": "block",
-            "reason": result.reason,
-        }
+        if not result.permitted:
+            return {"decision": "block", "reason": result.reason}
+
+        # Phase 2: LLM-based Bash command analysis.
+        if tool_name == "Bash" and self._bash_analysis and params.get("command"):
+            from governance.bash_analyzer import analyze_bash_command
+
+            analysis = analyze_bash_command(params["command"])
+            for write_path in analysis.writes:
+                path_result = self._service.check_permission(
+                    agent_id, role, "write_file", {"path": write_path},
+                )
+                if not path_result.permitted:
+                    log_event(
+                        {"type": "bash_analysis", "agent": agent_id,
+                         "command": params["command"], "writes": analysis.writes,
+                         "decision": "block", "reason": path_result.reason},
+                        self._events_path,
+                    )
+                    return {
+                        "decision": "block",
+                        "reason": f"Bash command writes to '{write_path}': {path_result.reason}",
+                    }
+            if analysis.writes:
+                log_event(
+                    {"type": "bash_analysis", "agent": agent_id,
+                     "command": params["command"], "writes": analysis.writes,
+                     "decision": "approve"},
+                    self._events_path,
+                )
+
+        return {"decision": "approve"}
 
     def post_tool_use(self, context: dict, agent: str | None = None) -> dict:
         """Handle PostToolUse hook.
 
-        Returns status and any norm changes from the action notification.
+        Checks achievement_triggers from the org spec. When a trigger matches
+        the tool name, command pattern, and exit code, marks the corresponding
+        achievement and notifies the governance engine.
         """
+        if not self._triggers:
+            return {"status": "ok"}
+
+        tool_name = context.get("tool_name", "")
+        tool_input = context.get("tool_input", {})
+        tool_response = context.get("tool_response", {})
+        exit_code = tool_response.get("exit_code", 0)
+
+        agent_id = agent or context.get("agent_name", "default-agent")
+        role = self._get_agent_role(agent_id)
+        if not role:
+            return {"status": "ok"}
+
+        achieved = []
+        for trigger in self._triggers:
+            if trigger.get("tool") != tool_name:
+                continue
+            required_exit = trigger.get("exit_code")
+            if required_exit is not None and exit_code != required_exit:
+                continue
+            pattern = trigger.get("command_pattern", "")
+            if pattern:
+                cmd = tool_input.get("command", "")
+                if not re.search(pattern, cmd):
+                    continue
+            achieved.append(trigger["marks"])
+
+        if achieved:
+            self._service.notify_action(agent_id, role, achieved=achieved)
+            self._events.append({
+                "type": "achieved", "agent": agent_id, "role": role,
+                "objectives": achieved,
+            })
+            self._save_state()
+            for mark in achieved:
+                log_event(
+                    {"type": "achieved", "agent": agent_id, "role": role, "mark": mark},
+                    self._events_path,
+                )
+
         return {"status": "ok"}
 
     def get_system_prompt_injection(self, agent: str) -> str | None:
@@ -238,7 +329,7 @@ def main():
         choices=["pre-tool-use", "post-tool-use", "register", "prompt"],
     )
     parser.add_argument("--org-spec", required=True, help="Path to org spec YAML")
-    parser.add_argument("--state", default=".aorta/state.json", help="State file path")
+    parser.add_argument("--state", default=None, help="State file path (default: ~/.aorta/state-<hash>.json)")
     parser.add_argument("--agent", help="Agent ID")
     parser.add_argument("--role", help="Role (for register)")
     parser.add_argument("--scope", default="", help="Scope (for register)")

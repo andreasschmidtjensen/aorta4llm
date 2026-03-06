@@ -1,4 +1,5 @@
 organization: code_review_workflow
+bash_analysis: true
 
 roles:
   implementer:

@@ -82,8 +82,12 @@ class GovernanceEngine:
             self.run_nc(agent, role)
 
             # Step 3: Build action term
-            action_path = params.get("path", "")
-            action_term = f"{action}('{action_path}')"
+            if action == "execute_command" and "command" in params:
+                action_arg = params["command"].replace("'", "\\'")
+                action_term = f"{action}('{action_arg}')"
+            else:
+                action_path = params.get("path", "")
+                action_term = f"{action}('{action_path}')"
 
             # Step 4: Query for blocks
             blocked_results = list(

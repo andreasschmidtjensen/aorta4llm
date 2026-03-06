@@ -1,4 +1,5 @@
 organization: security_workflow
+bash_analysis: true
 
 roles:
   security_lead:

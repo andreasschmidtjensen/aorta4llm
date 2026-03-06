@@ -1,0 +1,79 @@
+# test-gate.yaml — Single agent that cannot commit until tests pass.
+#
+# The agent can read and write freely, but `git commit` is blocked until
+# a test runner (pytest, npm test, etc.) exits with code 0. The PostToolUse
+# hook detects test success automatically and unlocks the gate.
+#
+# Usage:
+#   Register the agent:
+#     uv run python -m integration.hooks register \
+#         --org-spec org-specs/templates/test-gate.yaml \
+#         --agent dev --role agent
+#
+#   Configure hooks in .claude/settings.local.json:
+#     {
+#       "hooks": {
+#         "PreToolUse": [{
+#           "matcher": "Write|Edit|NotebookEdit|Bash",
+#           "command": "uv run python -m integration.hooks pre-tool-use --org-spec org-specs/templates/test-gate.yaml --agent dev"
+#         }],
+#         "PostToolUse": [{
+#           "matcher": "Bash",
+#           "command": "uv run python -m integration.hooks post-tool-use --org-spec org-specs/templates/test-gate.yaml --agent dev"
+#         }]
+#       }
+#     }
+
+organization: test_gate
+bash_analysis: true
+
+roles:
+  agent:
+    objectives:
+      - tests_passing
+      - task_complete
+    capabilities:
+      - read_file
+      - write_file
+      - execute_command
+
+norms:
+  # Block git commit until tests_passing is achieved.
+  # The achievement_triggers section below fires when pytest exits 0.
+  - role: agent
+    type: required_before
+    blocks: execute_command
+    command_pattern: "git commit"
+    requires: tests_passing
+
+  # Also block git push until tests pass (optional — remove if unwanted).
+  - role: agent
+    type: required_before
+    blocks: execute_command
+    command_pattern: "git push"
+    requires: tests_passing
+
+# Automatically mark tests_passing when a test runner exits successfully.
+# Add or remove patterns to match your test runner.
+achievement_triggers:
+  - tool: Bash
+    command_pattern: "pytest|python -m pytest|uv run pytest"
+    exit_code: 0
+    marks: tests_passing
+
+  - tool: Bash
+    command_pattern: "npm test|yarn test|pnpm test"
+    exit_code: 0
+    marks: tests_passing
+
+  - tool: Bash
+    command_pattern: "cargo test|go test"
+    exit_code: 0
+    marks: tests_passing
+
+workflow:
+  - agent: dev
+    role: agent
+    prompt: "{task}. Run the tests before committing — the governance layer will block git commit until they pass."
+    achievements:
+      - task_complete

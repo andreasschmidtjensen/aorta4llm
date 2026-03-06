@@ -117,6 +117,120 @@ class TestCompileEmpty:
         assert spec.facts == []
 
 
+class TestHighLevelNorms:
+    def test_forbidden_outside_emits_cond_fact(self):
+        spec = compile_spec_dict({
+            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src/"}]
+        })
+        assert any(
+            "cond(agent, forbidden, write_file(Path), false, not(in_scope(Path, 'src/')))" in f
+            for f in spec.facts
+        )
+
+    def test_forbidden_outside_adds_in_scope_rule(self):
+        spec = compile_spec_dict({
+            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src/"}]
+        })
+        assert "in_scope(Path, Scope) :- atom_concat(Scope, _, Path)." in spec.rules
+
+    def test_forbidden_outside_deduplicates_in_scope_rule(self):
+        spec = compile_spec_dict({
+            "norms": [
+                {"role": "agent", "type": "forbidden_outside", "path": "src/"},
+                {"role": "agent", "type": "forbidden_outside", "path": "lib/"},
+            ]
+        })
+        in_scope_rules = [r for r in spec.rules if r.startswith("in_scope(")]
+        assert len(in_scope_rules) == 1
+
+    def test_forbidden_outside_normalises_trailing_slash(self):
+        spec_with = compile_spec_dict({
+            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src/"}]
+        })
+        spec_without = compile_spec_dict({
+            "norms": [{"role": "agent", "type": "forbidden_outside", "path": "src"}]
+        })
+        assert spec_with.facts == spec_without.facts
+
+    def test_forbidden_paths_emits_one_cond_per_path(self):
+        spec = compile_spec_dict({
+            "norms": [
+                {"role": "agent", "type": "forbidden_paths",
+                 "paths": ["config/", ".env", "secrets/"]}
+            ]
+        })
+        cond_facts = [f for f in spec.facts if f.startswith("cond(")]
+        assert len(cond_facts) == 3
+
+    def test_forbidden_paths_uses_atom_concat(self):
+        spec = compile_spec_dict({
+            "norms": [
+                {"role": "agent", "type": "forbidden_paths", "paths": [".env"]}
+            ]
+        })
+        assert any("atom_concat('.env', _, Path)" in f for f in spec.facts)
+
+    def test_required_before_emits_cond_fact(self):
+        spec = compile_spec_dict({
+            "norms": [{
+                "role": "agent",
+                "type": "required_before",
+                "blocks": "execute_command",
+                "command_pattern": "git commit",
+                "requires": "tests_passing",
+            }]
+        })
+        cond_facts = [f for f in spec.facts if "execute_command(Cmd)" in f]
+        assert len(cond_facts) == 1
+        assert "not(achieved(tests_passing))" in cond_facts[0]
+
+    def test_required_before_emits_helper_rules(self):
+        spec = compile_spec_dict({
+            "norms": [{
+                "role": "agent",
+                "type": "required_before",
+                "command_pattern": "git commit",
+                "requires": "tests_passing",
+            }]
+        })
+        helper_rules = [r for r in spec.rules if "git commit" in r]
+        assert len(helper_rules) == 2  # prefix + suffix match
+
+    def test_required_before_stable_helper_name(self):
+        # Same pattern → same helper name across two compilations
+        spec1 = compile_spec_dict({
+            "norms": [{
+                "role": "a", "type": "required_before",
+                "command_pattern": "git commit", "requires": "x",
+            }]
+        })
+        spec2 = compile_spec_dict({
+            "norms": [{
+                "role": "b", "type": "required_before",
+                "command_pattern": "git commit", "requires": "y",
+            }]
+        })
+        helper1 = [f for f in spec1.facts if "execute_command" in f][0]
+        helper2 = [f for f in spec2.facts if "execute_command" in f][0]
+        # Both should reference the same helper name (derived from sha1 of pattern)
+        import re as _re
+        name1 = _re.search(r"cmd_matches_\w+", helper1).group()
+        name2 = _re.search(r"cmd_matches_\w+", helper2).group()
+        assert name1 == name2
+
+    def test_raw_norm_syntax_unchanged(self):
+        spec = compile_spec_dict({
+            "norms": [{
+                "role": "agent",
+                "type": "forbidden",
+                "objective": "write_file(Path)",
+                "deadline": "false",
+                "condition": "not(in_scope(Path, Scope))",
+            }]
+        })
+        assert "cond(agent, forbidden, write_file(Path), false, not(in_scope(Path, Scope)))" in spec.facts
+
+
 class TestCompileFromFile:
     def test_compile_code_review_yaml(self):
         from pathlib import Path

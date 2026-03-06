@@ -1,4 +1,5 @@
 organization: arch_gate_workflow
+bash_analysis: true
 
 roles:
   architect:
@@ -70,3 +71,24 @@ rules:
   - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
   - "is_source_file(Path) :- atom_concat(_, '.ts', Path)."
   - "is_source_file(Path) :- atom_concat(_, '.js', Path)."
+
+workflow:
+  - agent: architect-1
+    role: architect
+    prompt: "Explore the codebase and review the architecture for: {task}. Write your architecture review to docs/arch_review_{feature}.md."
+    achievements:
+      - architecture_reviewed({scope})
+
+  - agent: impl-1
+    role: implementer
+    scope: "{scope}"
+    prompt: "Implement: {task}. The architect's review is in the previous step's output. You are scoped to '{scope}'. Implement the feature, write tests, and run them."
+    achievements:
+      - feature_implemented({feature})
+      - tests_passing({feature})
+
+  - agent: rev-1
+    role: reviewer
+    prompt: "Review the implementation of: {task}. The implementer's output is in the previous step's output. Write your review to docs/review_{feature}.md."
+    achievements:
+      - code_reviewed({feature})

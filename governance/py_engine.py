@@ -118,8 +118,10 @@ class PythonGovernanceEngine:
         try:
             self.run_nc(agent, role)
 
-            action_path = params.get("path", "")
-            action_term = Term(action, (Atom(action_path),))
+            if action == "execute_command" and "command" in params:
+                action_term = Term(action, (Atom(params["command"]),))
+            else:
+                action_term = Term(action, (Atom(params.get("path", "")),))
 
             blocked_obj = self._check_action_blocked(agent, role, action_term)
             if blocked_obj is not None:

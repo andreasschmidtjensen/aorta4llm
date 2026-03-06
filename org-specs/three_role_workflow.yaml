@@ -1,4 +1,5 @@
 organization: three_role_workflow
+bash_analysis: true
 
 roles:
   architect:
@@ -70,3 +71,26 @@ rules:
   - "is_source_file(Path) :- atom_concat(_, '.py', Path)."
   - "is_source_file(Path) :- atom_concat(_, '.ts', Path)."
   - "is_source_file(Path) :- atom_concat(_, '.js', Path)."
+
+workflow:
+  - agent: architect-1
+    role: architect
+    prompt: "Explore the codebase and produce a design plan for: {task}. Write your design to docs/design_{feature}.md so the implementer can reference it. Be concise and specific."
+    achievements:
+      - system_design_complete({feature})
+      - architecture_documented({feature})
+
+  - agent: impl-1
+    role: implementer
+    scope: "{scope}"
+    prompt: "Implement the following feature: {task}. The architect's design is in the previous step's output. You are scoped to '{scope}' — you can only write files within this directory. Implement the feature, write tests, and run them. Make sure all tests pass before finishing."
+    achievements:
+      - feature_implemented({feature})
+      - tests_passing({feature})
+
+  - agent: rev-1
+    role: reviewer
+    prompt: "Review the implementation of: {task}. The implementer's output is in the previous step's output. Review the code for correctness, style, and completeness. You can read any file but you CANNOT modify source code files (.py, .ts, .js) — this is enforced by governance. Write your review to docs/review_{feature}.md."
+    achievements:
+      - code_reviewed({feature})
+      - review_documented({feature})

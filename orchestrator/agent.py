@@ -47,15 +47,17 @@ def _write_hook_settings(
     settings_dir.mkdir(parents=True, exist_ok=True)
     settings_file = settings_dir / "settings.local.json"
 
-    hook_cmd = (
-        f"uv run python -m integration.hooks pre-tool-use"
+    base_hook_args = (
         f" --org-spec {org_spec_path}"
         f" --agent {agent_id}"
         f" --state {state_path}"
         f" --events-path {events_path}"
     )
     if project_cwd:
-        hook_cmd += f" --cwd {project_cwd}"
+        base_hook_args += f" --cwd {project_cwd}"
+
+    pre_tool_cmd = f"uv run python -m integration.hooks pre-tool-use{base_hook_args}"
+    post_tool_cmd = f"uv run python -m integration.hooks post-tool-use{base_hook_args}"
 
     settings = {
         "permissions": {
@@ -70,7 +72,15 @@ def _write_hook_settings(
                 "matcher": "Write|Edit|NotebookEdit",
                 "hooks": [{
                     "type": "command",
-                    "command": hook_cmd,
+                    "command": pre_tool_cmd,
+                    "timeout": 10000,
+                }],
+            }],
+            "PostToolUse": [{
+                "matcher": "Bash",
+                "hooks": [{
+                    "type": "command",
+                    "command": post_tool_cmd,
                     "timeout": 10000,
                 }],
             }],
