@@ -85,6 +85,7 @@ class GovernanceHook:
         self._replaying = False
         self._soft_block_cache: dict[str, float] = {}  # command_hash -> timestamp
         self._soft_block_window = extras[3]
+        self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
 
     def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int]:
@@ -141,9 +142,8 @@ class GovernanceHook:
         })
         self._save_state()
         if not self._replaying:
-            log_event(
+            self._log(
                 {"type": "register", "agent": agent, "role": role, "scope": scope},
-                self._events_path,
             )
 
     def pre_tool_use(self, context: dict, agent: str | None = None,
@@ -200,7 +200,7 @@ class GovernanceHook:
         if not result.permitted:
             event["reason"] = result.reason
             event["severity"] = result.severity
-        log_event(event, self._events_path)
+        self._log(event)
 
         if not result.permitted:
             if result.severity == "soft":
@@ -217,22 +217,20 @@ class GovernanceHook:
                     agent_id, role, "write_file", {"path": write_path},
                 )
                 if not path_result.permitted:
-                    log_event(
+                    self._log(
                         {"type": "bash_analysis", "agent": agent_id,
                          "command": params["command"], "writes": analysis.writes,
                          "decision": "block", "reason": path_result.reason},
-                        self._events_path,
                     )
                     return {
                         "decision": "block",
                         "reason": f"Bash command writes to '{write_path}': {path_result.reason}",
                     }
             if analysis.writes:
-                log_event(
+                self._log(
                     {"type": "bash_analysis", "agent": agent_id,
                      "command": params["command"], "writes": analysis.writes,
                      "decision": "approve"},
-                    self._events_path,
                 )
 
         return {"decision": "approve"}
@@ -279,9 +277,8 @@ class GovernanceHook:
             })
             self._save_state()
             for mark in achieved:
-                log_event(
+                self._log(
                     {"type": "achieved", "agent": agent_id, "role": role, "mark": mark},
-                    self._events_path,
                 )
 
         return {"status": "ok"}
@@ -357,6 +354,11 @@ class GovernanceHook:
         """Generate a cache key for soft block deduplication."""
         raw = params.get("command", "") or params.get("path", "")
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    def _log(self, event: dict) -> None:
+        """Log an event tagged with the org spec name."""
+        event["org_spec"] = self._org_spec_name
+        log_event(event, self._events_path)
 
     def _get_agent_role(self, agent: str) -> str | None:
         """Look up the role for a registered agent."""
