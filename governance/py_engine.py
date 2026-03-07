@@ -1,7 +1,7 @@
 """Pure-Python governance engine.
 
-Implements the NC (Norm Check) and OG (Option Generation) phases
-using the Python term/evaluator modules.
+Implements the Norm Check (NC) and Option Generation (OG) phases
+using the term representation and condition evaluator modules.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from governance.terms import (
 
 
 def _prolog_list_to_strings(lst: TermType) -> list[str]:
-    """Convert a Prolog-style list term to a Python list of strings."""
+    """Convert a linked-list term to a Python list of strings."""
     result = []
     current = lst
     while isinstance(current, Term) and current.functor == "." and len(current.args) == 2:
@@ -166,7 +166,7 @@ class PythonGovernanceEngine:
         self._facts.assert_fact("rea", (Atom(agent), Atom(role)))
 
     def run_nc(self, agent: str, role: str) -> None:
-        """Run the NC (Norm Check) phase — Python translation of nc.pl."""
+        """Run the Norm Check (NC) phase — activate, fulfill, violate, and expire norms."""
         self._nc_activate_obligation()
         self._nc_fulfill_obligation()
         self._nc_violate_obligation()
@@ -275,7 +275,7 @@ class PythonGovernanceEngine:
                 return term_to_str(role)
         return None
 
-    # --- NC phase rules (translation of nc.pl) ---
+    # --- Norm Check (NC) phase ---
 
     def _nc_activate_obligation(self) -> None:
         """Activate obligations when condition holds and objective not achieved."""
@@ -398,9 +398,9 @@ class PythonGovernanceEngine:
     ) -> tuple[TermType | None, str, str]:
         """Check if an action is blocked by any prohibition.
 
-        Two paths (matching nc.pl's two check_action_blocked clauses):
-        1. Check activated norm/5 facts with forbidden deontic
-        2. Check cond/5 facts directly — unify action with objective to bind variables
+        Two paths:
+        1. Check activated norm facts with forbidden deontic
+        2. Check conditional prohibitions directly — unify action with objective to bind variables
 
         Returns (blocking_objective, severity, reason) where severity is "hard" or "soft".
         If multiple norms match, the hardest severity wins (hard > soft).
@@ -502,7 +502,7 @@ class PythonGovernanceEngine:
                 result.add((term_to_str(v_deon), term_to_str(v_obj)))
         return result
 
-    # --- OG phase (translation of og.pl) ---
+    # --- Option Generation (OG) phase ---
 
     def _query_options(self, agent: str) -> list[dict]:
         options = []
@@ -630,7 +630,7 @@ class PythonGovernanceEngine:
 
     @staticmethod
     def _list_to_terms(lst: TermType) -> list[TermType]:
-        """Convert a Prolog-style list term to a Python list of terms."""
+        """Convert a linked-list term to a Python list of terms."""
         result = []
         current = lst
         while isinstance(current, Term) and current.functor == "." and len(current.args) == 2:

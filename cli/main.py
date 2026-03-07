@@ -28,6 +28,7 @@ def main():
     from cli.cmd_norm import add_parser as add_remove_norm
     from cli.cmd_add_template import add_parser as add_add_template
     from cli.cmd_access import add_parser as add_access
+    from cli.cmd_permissions import add_parser as add_permissions
 
     add_validate(sub)
     add_dry_run(sub)
@@ -46,6 +47,7 @@ def main():
     add_remove_norm(sub)
     add_add_template(sub)
     add_access(sub)
+    add_permissions(sub)
 
     args = parser.parse_args()
     if not args.command:

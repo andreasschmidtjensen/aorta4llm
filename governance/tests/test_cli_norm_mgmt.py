@@ -38,7 +38,7 @@ def _load_spec(path):
 
 
 class TestProtectCommand:
-    def test_adds_protected_norm(self, tmp_path, monkeypatch):
+    def test_sets_no_access(self, tmp_path, monkeypatch):
         spec_path = _make_spec(tmp_path)
         monkeypatch.chdir(tmp_path)
 
@@ -47,12 +47,11 @@ class TestProtectCommand:
         run_protect(args)
 
         spec = _load_spec(spec_path)
-        assert any(n["type"] == "protected" and ".env" in n["paths"] for n in spec["norms"])
+        assert spec["access"][".env"] == "no-access"
+        assert spec["access"]["secrets/"] == "no-access"
 
-    def test_duplicate_not_added(self, tmp_path, monkeypatch):
-        spec_path = _make_spec(tmp_path, norms=[
-            {"type": "protected", "role": "agent", "paths": [".env"]},
-        ])
+    def test_overwrites_existing_level(self, tmp_path, monkeypatch):
+        spec_path = _make_spec(tmp_path, access={".env": "read-only"})
         monkeypatch.chdir(tmp_path)
 
         from cli.cmd_protect import run_protect
@@ -60,12 +59,11 @@ class TestProtectCommand:
         run_protect(args)
 
         spec = _load_spec(spec_path)
-        protected = [n for n in spec["norms"] if n["type"] == "protected"]
-        assert len(protected) == 1
+        assert spec["access"][".env"] == "no-access"
 
 
 class TestReadonlyCommand:
-    def test_adds_readonly_norm(self, tmp_path, monkeypatch):
+    def test_sets_read_only(self, tmp_path, monkeypatch):
         spec_path = _make_spec(tmp_path)
         monkeypatch.chdir(tmp_path)
 
@@ -74,7 +72,7 @@ class TestReadonlyCommand:
         run_readonly(args)
 
         spec = _load_spec(spec_path)
-        assert any(n["type"] == "readonly" for n in spec["norms"])
+        assert spec["access"]["config/"] == "read-only"
 
 
 class TestForbidCommand:

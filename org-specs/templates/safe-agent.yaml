@@ -18,29 +18,15 @@ roles:
       - write_file
       - execute_command
 
+access:
+  src/:       read-write
+  .env:       no-access
+  .env.local: no-access
+  secrets/:   no-access
+  .ssh/:      no-access
+  config/:    read-only
+
 norms:
-  # Block writes outside the assigned scope (set at registration time).
-  # Change 'src/' to the directory you want the agent to work in.
-  - role: agent
-    type: scope
-    paths:
-      - src/
-
-  # Block reads AND writes to secrets and sensitive files.
-  - role: agent
-    type: protected
-    paths:
-      - .env
-      - .env.local
-      - secrets/
-      - .ssh/
-
-  # Block writes to configuration (readable but not writable).
-  - role: agent
-    type: readonly
-    paths:
-      - config/
-
   # Soft-block git commit/push (agent must confirm with user).
   - role: agent
     type: forbidden_command

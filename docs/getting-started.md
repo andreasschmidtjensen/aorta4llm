@@ -15,9 +15,11 @@ aorta init --template safe-agent --scope src/
 ```
 
 This creates:
-- `.aorta/safe-agent.yaml` — the org spec (governance rules), with `scope` paths set to your `--scope`
+- `.aorta/safe-agent.yaml` — the org spec (governance rules), with `access` map entries set from your `--scope`
 - `.claude/settings.local.json` — Claude Code hook configuration
-- `.aorta/events.jsonl` — event log (project-local)
+- `.aorta/state.json` — event-sourced state (project-local)
+- `.aorta/events.jsonl` — event log for `aorta watch`
+- `.claude/commands/aorta-permissions.md` and `aorta-status.md` — slash commands for agent introspection
 - Registers agent `agent` with scope `src/`
 
 Multiple scopes are supported:
@@ -26,15 +28,16 @@ Multiple scopes are supported:
 aorta init --template safe-agent --scope src/ tests/
 ```
 
-The `safe-agent` template uses `protected` norms for `.env` and `secrets/`, so Read/Glob/Grep tools are automatically hooked. Use `--strict` to hook reads even without `protected` norms.
+The `safe-agent` template uses `no-access` entries for `.env` and `secrets/`, so Read/Glob/Grep tools are automatically hooked. Use `--strict` to hook reads even without `no-access` entries.
 
 Available templates (`aorta init --list-templates`):
 - **safe-agent** — single agent scoped to a directory
 - **test-gate** — must pass tests before committing
+- **minimal** — scope-only, no norms or bash analysis (built-in)
 
 ## Customize the org spec
 
-Edit `.aorta/safe-agent.yaml`. Here's a full example showing all features:
+Edit `.aorta/safe-agent.yaml`. The `access` map is the primary way to control file access:
 
 ```yaml
 organization: my-project
@@ -44,22 +47,23 @@ roles:
     objectives: [task_complete]
     capabilities: [read_file, write_file, execute_command]
 
+# Access map — the primary interface for file-level governance.
+# read-write: agent can read and write
+# read-only:  agent can read but not write
+# no-access:  agent cannot read or write
+access:
+  src/:       read-write
+  tests/:     read-write
+  .env:       no-access
+  .env.local: no-access
+  secrets/:   no-access
+  "*.key":    no-access
+  "*.pem":    no-access
+  config/:    read-only
+  "**/*.secret": read-only
+
+# Norms — for command-level governance and advanced rules.
 norms:
-  # Keep writes inside src/ and tests/
-  - type: scope
-    role: agent
-    paths: [src/, tests/]
-
-  # Protect sensitive files from both reading and writing
-  - type: protected
-    role: agent
-    paths: [".env", ".env.local", "secrets/", "*.key", "*.pem"]
-
-  # Block writes to config (readable but not writable)
-  - type: readonly
-    role: agent
-    paths: ["config/", "**/*.secret"]
-
   # Require tests before committing
   - type: required_before
     role: agent
@@ -103,19 +107,39 @@ soft_block_window: 30
 **Note:** `.aorta/` and `.claude/` are always protected — the hook engine
 hard-blocks writes to governance infrastructure regardless of your org spec.
 
+## Access map
+
+The `access` map is the recommended way to control file access:
+
+| Level | Effect |
+|-------|--------|
+| `read-write` | Agent can read and write (also sets the write scope) |
+| `read-only` | Agent can read but writes are blocked |
+| `no-access` | Both reads and writes are blocked |
+
+Manage from the CLI:
+
+```bash
+aorta access src/ read-write
+aorta access .env no-access
+aorta protect .ssh/           # shorthand for no-access
+aorta readonly config/        # shorthand for read-only
+```
+
 ## Norm types
+
+For command-level governance and advanced rules, use explicit norms:
 
 | Type | What it blocks | Key fields |
 |------|---------------|------------|
-| `scope` | `write_file` outside allowed directories | `paths` (list) |
-| `protected` | `read_file` AND `write_file` matching path prefixes or globs | `paths` (list) |
-| `readonly` | `write_file` matching path prefixes or globs | `paths` (list) |
 | `forbidden_command` | `execute_command` containing a substring | `command_pattern`, optional `severity` |
 | `required_before` | `execute_command` until an achievement exists | `command_pattern`, `requires` |
 | `obliged` | Creates an obligation with a deadline | `objective`, `condition`, `deadline` |
 | `forbidden` | Creates a prohibition with a condition | `objective`, `condition` |
 
 Any norm can have `severity: soft` (confirmation-required) or `severity: hard` (default, always denied).
+
+Advanced: You can still use `scope`, `protected`, and `readonly` norm types directly in the `norms:` list. The `access` map is syntactic sugar that generates these norms internally.
 
 ## Soft vs hard blocks
 
@@ -161,6 +185,15 @@ When Claude Code calls a tool (Write, Edit, Bash, etc.):
    - Each extracted write path is checked against file-write norms
 6. **Block or approve** — hard blocks deny; soft blocks prompt for confirmation
 
+## Slash commands
+
+`aorta init` creates slash commands that the agent can use during a Claude Code session:
+
+- `/project:aorta-permissions` — show effective permissions
+- `/project:aorta-status` — show governance state
+
+These run read-only `aorta` commands. The agent can also run `aorta status`, `aorta permissions`, `aorta explain`, `aorta validate`, and `aorta doctor` directly via Bash — read-only aorta commands are allowed. Only mutating commands (`init`, `reset`, `allow-once`, etc.) are blocked.
+
 ## Check governance state
 
 ```bash
@@ -168,6 +201,14 @@ aorta status --org-spec .aorta/safe-agent.yaml
 ```
 
 Shows registered agents, active norms, achievements, and recent activity (approved/blocked counts, last blocked actions). Add `--json` for machine-readable output.
+
+## Check effective permissions
+
+```bash
+aorta permissions --org-spec .aorta/safe-agent.yaml
+```
+
+Shows the access map with actual read/write status, command restrictions, achievements, and self-protection rules.
 
 ## Reset state
 

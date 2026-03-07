@@ -1,4 +1,4 @@
-"""Shared data types for governance engines (Prolog and Python)."""
+"""Shared data types for the governance engine."""
 
 from dataclasses import dataclass, field
 

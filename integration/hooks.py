@@ -59,16 +59,74 @@ TOOL_ACTION_MAP = {
 }
 
 
-# Patterns that indicate a governance command (agents must never run these).
-_GOVERNANCE_CMD_PATTERNS = re.compile(
+# Patterns that indicate an aorta CLI invocation.
+_AORTA_CMD_PATTERN = re.compile(
     r"(?:^|\s|&&|\|\||;)"  # start of string or command separator
     r"(?:aorta\s|python\s+-m\s+(?:cli|integration\.hooks)\s)",
 )
 
+# Read-only aorta subcommands that agents may run.
+_SAFE_AORTA_SUBCOMMANDS = frozenset({
+    "status", "permissions", "explain", "validate", "dry-run", "doctor", "watch",
+})
+
 
 def _is_governance_command(cmd: str) -> bool:
-    """Check if a bash command invokes aorta governance tools."""
-    return bool(_GOVERNANCE_CMD_PATTERNS.search(cmd))
+    """Check if a bash command invokes a mutating aorta governance tool.
+
+    Read-only commands (status, permissions, explain, etc.) are allowed.
+    Mutating commands (reset, init, allow-once, protect, etc.) are blocked.
+    """
+    if not _AORTA_CMD_PATTERN.search(cmd):
+        return False
+    # Extract the subcommand after 'aorta'.
+    m = re.search(r"aorta\s+(\S+)", cmd)
+    if m and m.group(1) in _SAFE_AORTA_SUBCOMMANDS:
+        return False
+    return True
+
+
+def _truncate_reason(reason: str, max_len: int = 200) -> str:
+    """Truncate long block reasons (e.g. multiline heredoc commands)."""
+    # Collapse newlines inside the reason to keep it on one conceptual line.
+    collapsed = reason.replace("\n", " ").replace("  ", " ")
+    if len(collapsed) <= max_len:
+        return collapsed
+    return collapsed[:max_len] + "..."
+
+
+def _shorten_block_reason(reason: str) -> str:
+    """Extract the human-readable part of a block reason, dropping the command echo.
+
+    Engine reasons look like:
+        "execute_command(git commit -m '...') blocked for dev (role: agent): command contains 'git commit'"
+    Returns: "command contains 'git commit'"
+
+    For path-based reasons:
+        "write_file(README.md) blocked for dev (role: agent): path is outside allowed scopes ['src/']"
+    Returns: "path is outside allowed scopes ['src/']"
+    """
+    marker = "): "
+    idx = reason.rfind(marker)
+    if idx != -1:
+        return reason[idx + len(marker):]
+    return _truncate_reason(reason)
+
+
+# User-facing names for governance actions.
+ACTION_DISPLAY_NAMES = {
+    "write_file": "Write",
+    "read_file": "Read",
+    "execute_command": "Bash",
+}
+
+
+def _display_action(action: str, path: str) -> str:
+    """Format an action for user-facing messages. e.g. 'Write to README.md'."""
+    name = ACTION_DISPLAY_NAMES.get(action, action)
+    if path:
+        return f"{name} to {path}" if action == "write_file" else f"{name} {path}"
+    return name
 
 
 def _default_state_path(org_spec_path: str | Path) -> Path:
@@ -313,16 +371,19 @@ class GovernanceHook:
                     "reason": result.reason, "severity": "soft",
                 })
                 return soft_result
-            reason = result.reason
+            short_reason = _shorten_block_reason(result.reason)
+            display = _display_action(action, path)
+            user_reason = f"{display} blocked: {short_reason}"
             self._log({
                 "type": "check", "agent": agent_id, "role": role,
                 "action": action, "path": params.get("path", ""),
-                "decision": "block", "reason": reason, "severity": "hard",
+                "decision": "block", "reason": _truncate_reason(result.reason),
+                "severity": "hard",
             })
             if path:
                 spec_rel = str(self._org_spec_path)
-                reason += f"\n  To grant a one-time exception: aorta allow-once --org-spec {spec_rel} --path {path}"
-            return {"decision": "block", "reason": reason}
+                user_reason += f"\n  To grant a one-time exception: aorta allow-once --org-spec {spec_rel} --path {path}"
+            return {"decision": "block", "reason": user_reason}
 
         self._log({
             "type": "check", "agent": agent_id, "role": role,
@@ -345,9 +406,10 @@ class GovernanceHook:
                          "command": params["command"], "writes": analysis.writes,
                          "decision": "block", "reason": path_result.reason},
                     )
+                    short = _shorten_block_reason(path_result.reason)
                     return {
                         "decision": "block",
-                        "reason": f"Bash command writes to '{write_path}': {path_result.reason}",
+                        "reason": f"Bash command writes to '{write_path}': {short}",
                     }
             if analysis.writes:
                 self._log(
@@ -500,14 +562,12 @@ class GovernanceHook:
         # First time — block and cache for retry.
         self._soft_block_cache[cache_key] = now
         self._save_state()
+        short_reason = _shorten_block_reason(reason)
         return {
             "decision": "block",
             "reason": (
-                f"SOFT BLOCK — user confirmation required.\n"
-                f"Reason: {reason}\n"
-                f"Action: Ask the user whether they want to proceed. "
-                f"If the user confirms, retry the EXACT same command. "
-                f"The retry will be approved automatically within {self._soft_block_window}s."
+                f"SOFT BLOCK: {short_reason}\n"
+                f"Ask the user to confirm, then retry the exact same command."
             ),
         }
 

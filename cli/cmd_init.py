@@ -60,11 +60,12 @@ def _merge_hooks(old_hooks: dict, new_aorta_hooks: dict) -> dict:
 
 def add_parser(subparsers):
     p = subparsers.add_parser("init", help="Initialize governance for this project")
-    p.add_argument("--template", help="Template name (safe-agent, test-gate)")
+    p.add_argument("--template", help="Template name (safe-agent, test-gate, or minimal)")
     p.add_argument("--scope", nargs="+", default=["src/"], help="Directory scope(s) for the agent (e.g. --scope src/ tests/)")
     p.add_argument("--list-templates", action="store_true", help="List available templates")
     p.add_argument("--strict", action="store_true", help="Also hook Read/Glob/Grep to enforce read restrictions")
     p.add_argument("--reinit", action="store_true", help="Overwrite existing aorta hooks without prompting")
+    p.add_argument("--dry-run", action="store_true", help="Show what would be created without creating anything")
     p.set_defaults(func=run)
 
 
@@ -94,41 +95,63 @@ def run(args):
         print("Available templates:")
         for t in list_templates():
             print(f"  {t['name']:20s} {t['description']}")
+        print(f"  {'minimal':20s} Scope-only — no norms, no bash analysis")
         print("\nUsage: aorta init --template <name> --scope <dir>")
-        raise SystemExit(1)
-
-    template_path = TEMPLATES_DIR / f"{args.template}.yaml"
-    if not template_path.exists():
-        print(f"Template not found: {args.template}")
-        print("Available:", ", ".join(t["name"] for t in list_templates()))
         raise SystemExit(1)
 
     # Normalize scopes: ensure trailing slash
     scopes = [s.rstrip("/") + "/" for s in args.scope]
     scope_str = " ".join(scopes)  # for display and registration
 
-    # 1. Read template, strip header comments, update for user's config.
-    with open(template_path) as f:
-        spec = yaml.safe_load(f)
+    # Handle --template minimal as a built-in (no YAML file needed).
+    if args.template == "minimal":
+        spec = {
+            "organization": "minimal",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "access": {s: "read-write" for s in scopes},
+        }
+        org_spec_dest = Path(".aorta/minimal.yaml")
+    else:
+        template_path = TEMPLATES_DIR / f"{args.template}.yaml"
+        if not template_path.exists():
+            print(f"Template not found: {args.template}")
+            print("Available:", ", ".join(t["name"] for t in list_templates()))
+            raise SystemExit(1)
 
-    org_spec_dest = Path(f".aorta/{args.template}.yaml")
-    org_spec_dest.parent.mkdir(parents=True, exist_ok=True)
+        # 1. Read template, strip header comments, update for user's config.
+        with open(template_path) as f:
+            spec = yaml.safe_load(f)
 
-    # 2. Update scope norms to match --scope.
-    new_norms = []
-    for norm in spec.get("norms", []):
-        if norm.get("type") == "scope":
-            norm["paths"] = scopes
-            new_norms.append(norm)
+        org_spec_dest = Path(f".aorta/{args.template}.yaml")
+
+    # 2. Update scope to match --scope (skip for minimal — already set).
+    if args.template != "minimal":
+        # If the template has an access map, update read-write entries.
+        # Otherwise, update scope norms (legacy templates).
+        if "access" in spec:
+            access = spec["access"]
+            # Remove existing read-write entries, add new ones from --scope.
+            old_rw = [k for k, v in access.items() if v == "read-write"]
+            for k in old_rw:
+                del access[k]
+            # Insert new read-write scopes at the beginning.
+            new_access = {s: "read-write" for s in scopes}
+            new_access.update(access)
+            spec["access"] = new_access
         else:
-            new_norms.append(norm)
-    spec["norms"] = new_norms
-
-    with open(org_spec_dest, "w") as f:
-        yaml.dump(spec, f, default_flow_style=False, sort_keys=False)
-
-    print(f"Created org spec at {org_spec_dest}")
-    print(f"  Allowed scope(s): {scope_str}")
+            new_norms = []
+            for norm in spec.get("norms", []):
+                if norm.get("type") == "scope":
+                    norm["paths"] = scopes
+                    new_norms.append(norm)
+                else:
+                    new_norms.append(norm)
+            spec["norms"] = new_norms
 
     # 3. Determine role from template.
     roles = list(spec.get("roles", {}).keys())
@@ -146,10 +169,11 @@ def run(args):
     pre_cmd = f"aorta hook pre-tool-use --org-spec {spec_rel} --agent {"agent"} --events-path {events_rel}"
     post_cmd = f"aorta hook post-tool-use --org-spec {spec_rel} --agent {"agent"} --events-path {events_rel}"
 
-    # Write tools matcher — add Read/Glob/Grep if --strict or protected norms exist
+    # Write tools matcher — add Read/Glob/Grep if --strict or protected/no-access entries exist
     has_protected = any(n.get("type") == "protected" for n in spec.get("norms", []))
+    has_no_access = any(v == "no-access" for v in spec.get("access", {}).values())
     write_matcher = "Write|Edit|NotebookEdit|Bash"
-    if args.strict or has_protected:
+    if args.strict or has_protected or has_no_access:
         write_matcher = "Write|Edit|NotebookEdit|Bash|Read|Glob|Grep"
 
     hooks_config: dict = {
@@ -163,6 +187,53 @@ def run(args):
             "matcher": "Bash",
             "hooks": [{"type": "command", "command": post_cmd}],
         }]
+
+    # --- Dry run: show what would be created and exit ---
+    if args.dry_run:
+        print("Dry run — no files will be created.\n")
+        print("Would create:")
+        print(f"  {org_spec_dest}")
+        print(f"  .claude/settings.local.json")
+        print(f"  .aorta/state.json (agent 'agent' registered)")
+        print()
+
+        # Show org spec contents summary.
+        access = spec.get("access", {})
+        if access:
+            print("Access map:")
+            for path, level in access.items():
+                print(f"  {path:20s} {level}")
+            print()
+
+        norms = spec.get("norms", [])
+        if norms:
+            print(f"Norms ({len(norms)}):")
+            for norm in norms:
+                ntype = norm.get("type", "?")
+                severity = f" [{norm['severity']}]" if norm.get("severity") else ""
+                if ntype == "forbidden_command":
+                    print(f"  {ntype}{severity}: {norm.get('command_pattern', '')}")
+                elif ntype == "required_before":
+                    print(f"  {ntype}: '{norm.get('command_pattern', '')}' requires {norm.get('requires', '?')}")
+                else:
+                    print(f"  {ntype}{severity}")
+            print()
+
+        print(f"Hooks:")
+        print(f"  PreToolUse: {write_matcher}")
+        if needs_post:
+            print(f"  PostToolUse: Bash")
+        return
+
+    # --- Actual init ---
+
+    org_spec_dest.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(org_spec_dest, "w") as f:
+        yaml.dump(spec, f, default_flow_style=False, sort_keys=False)
+
+    print(f"Created org spec at {org_spec_dest}")
+    print(f"  Allowed scope(s): {scope_str}")
 
     # 5. Write .claude/settings.local.json — smart merge with existing hooks.
     settings_path = Path(".claude/settings.local.json")
@@ -184,8 +255,8 @@ def run(args):
     existing["hooks"] = merged_hooks
     settings_path.write_text(json.dumps(existing, indent=2) + "\n")
     print(f"Wrote hooks config to {settings_path}")
-    if has_protected or args.strict:
-        print(f"  Read/Glob/Grep hooked (protected norms detected)")
+    if has_protected or has_no_access or args.strict:
+        print(f"  Read/Glob/Grep hooked (no-access entries detected)")
 
     # 6. Register the agent.
     from integration.hooks import GovernanceHook
@@ -195,12 +266,24 @@ def run(args):
     hook.register_agent("agent", role, scope_str, reinit=args.reinit)
     print(f"Registered agent '{"agent"}' as '{role}' with scope '{scope_str}'")
 
-    # 7. Summary.
+    # 7. Create slash commands for agent introspection.
+    commands_dir = Path(".claude/commands")
+    commands_dir.mkdir(parents=True, exist_ok=True)
+    (commands_dir / "aorta-permissions.md").write_text(
+        f"Run `aorta permissions --org-spec {spec_rel}` and show the output.\n"
+    )
+    (commands_dir / "aorta-status.md").write_text(
+        f"Run `aorta status --org-spec {spec_rel}` and show the output.\n"
+    )
+    print(f"Created slash commands in {commands_dir}")
+
+    # 8. Summary.
     print(f"\nSetup complete:")
     print(f"  Org spec:  {org_spec_dest}")
     print(f"  Hooks:     {settings_path}")
     print(f"  Events:    {events_rel}")
     print(f"  Agent:     {"agent"} (role: {role}, scope: {scope_str})")
+    print(f"  Commands:  /project:aorta-permissions, /project:aorta-status")
     if needs_post:
         print(f"  PostToolUse hooks enabled (achievement triggers detected)")
     print(f"\nRun 'aorta validate {org_spec_dest}' to verify the spec.")

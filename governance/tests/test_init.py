@@ -35,6 +35,7 @@ class TestRunInit:
         a.list_templates = False
         a.strict = False
         a.reinit = False
+        a.dry_run = False
         return a
 
     def test_init_creates_org_spec(self, tmp_path, monkeypatch):
@@ -49,6 +50,16 @@ class TestRunInit:
         assert settings.exists()
         data = json.loads(settings.read_text())
         assert "PreToolUse" in data.get("hooks", {})
+
+    def test_init_creates_slash_commands(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        run(self._make_args())
+        perms = tmp_path / ".claude" / "commands" / "aorta-permissions.md"
+        status = tmp_path / ".claude" / "commands" / "aorta-status.md"
+        assert perms.exists()
+        assert status.exists()
+        assert "aorta permissions" in perms.read_text()
+        assert "aorta status" in status.read_text()
 
     def test_init_registers_agent(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -101,10 +112,10 @@ class TestRunInit:
         run(self._make_args(scope=["src/", "tests/"]))
         import yaml
         spec = yaml.safe_load((tmp_path / ".aorta" / "safe-agent.yaml").read_text())
-        # Should have multi-scope scope norm
-        scope_norms = [n for n in spec["norms"] if n["type"] == "scope"]
-        assert len(scope_norms) == 1
-        assert scope_norms[0]["paths"] == ["src/", "tests/"]
+        # Should have multi-scope access entries
+        access = spec.get("access", {})
+        assert access.get("src/") == "read-write"
+        assert access.get("tests/") == "read-write"
 
     def test_init_blocks_without_reinit(self, tmp_path, monkeypatch):
         """Re-running init without --reinit exits with error."""
@@ -172,3 +183,57 @@ class TestRunInit:
         assert "Read" in matcher
         assert "Glob" in matcher
         assert "Grep" in matcher
+
+    def test_init_dry_run_creates_nothing(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        args = self._make_args()
+        args.dry_run = True
+        run(args)
+        # No files should be created
+        assert not (tmp_path / ".aorta").exists()
+        assert not (tmp_path / ".claude").exists()
+        # Should print dry-run output
+        output = capsys.readouterr().out
+        assert "Dry run" in output
+        assert "Would create" in output
+
+    def test_init_no_access_hooks_read(self, tmp_path, monkeypatch):
+        """safe-agent template has no-access entries, so Read/Glob/Grep should be hooked."""
+        monkeypatch.chdir(tmp_path)
+        run(self._make_args())
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+        matcher = data["hooks"]["PreToolUse"][0]["matcher"]
+        assert "Read" in matcher
+
+    def test_init_access_map_updated_with_scope(self, tmp_path, monkeypatch):
+        """--scope should update access map read-write entries."""
+        monkeypatch.chdir(tmp_path)
+        run(self._make_args(scope=["lib/", "app/"]))
+        import yaml
+        spec = yaml.safe_load((tmp_path / ".aorta" / "safe-agent.yaml").read_text())
+        access = spec.get("access", {})
+        assert access.get("lib/") == "read-write"
+        assert access.get("app/") == "read-write"
+        # Original template's src/ should be replaced
+        assert "src/" not in access
+
+    def test_init_minimal_creates_scope_only_spec(self, tmp_path, monkeypatch):
+        """--template minimal creates a bare scope-only spec with no norms."""
+        monkeypatch.chdir(tmp_path)
+        run(self._make_args(template="minimal", scope=["src/", "lib/"]))
+        import yaml
+        spec_path = tmp_path / ".aorta" / "minimal.yaml"
+        assert spec_path.exists()
+        spec = yaml.safe_load(spec_path.read_text())
+        assert spec["organization"] == "minimal"
+        assert spec.get("access") == {"src/": "read-write", "lib/": "read-write"}
+        assert spec.get("norms") is None
+        assert spec.get("bash_analysis") is None
+
+    def test_init_minimal_no_read_hooks(self, tmp_path, monkeypatch):
+        """Minimal template should not hook Read/Glob/Grep (no no-access entries)."""
+        monkeypatch.chdir(tmp_path)
+        run(self._make_args(template="minimal"))
+        data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
+        matcher = data["hooks"]["PreToolUse"][0]["matcher"]
+        assert "Read" not in matcher

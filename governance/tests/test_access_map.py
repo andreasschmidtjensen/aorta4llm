@@ -55,7 +55,7 @@ class TestExpandAccessMap:
 
 
 class TestAccessMapCompilation:
-    """Tests for access map being compiled into Prolog facts."""
+    """Tests for access map being compiled into governance facts."""
 
     def test_access_map_produces_cond_facts(self):
         spec = compile_spec_dict({

@@ -1,4 +1,4 @@
-"""YAML -> Prolog fact compiler for organizational specifications."""
+"""YAML org spec compiler — converts org specs to structured facts and rules."""
 
 import hashlib
 from dataclasses import dataclass, field
@@ -9,14 +9,14 @@ import yaml
 
 @dataclass
 class CompiledSpec:
-    """Holds compiled Prolog facts and rules from an org spec."""
+    """Holds compiled facts and rules from an org spec."""
 
     facts: list[str] = field(default_factory=list)   # No trailing '.'
     rules: list[str] = field(default_factory=list)    # With trailing '.'
 
 
 def compile_org_spec(yaml_path: str | Path) -> CompiledSpec:
-    """Compile a YAML org spec file to Prolog facts and rules."""
+    """Compile a YAML org spec file to structured facts and rules."""
     path = Path(yaml_path)
     with open(path) as f:
         spec_dict = yaml.safe_load(f)
@@ -24,7 +24,7 @@ def compile_org_spec(yaml_path: str | Path) -> CompiledSpec:
 
 
 def compile_spec_dict(spec_dict: dict) -> CompiledSpec:
-    """Compile an org spec dictionary to Prolog facts and rules.
+    """Compile an org spec dictionary to structured facts and rules.
 
     This is the core logic, testable without files.
     """
@@ -33,9 +33,12 @@ def compile_spec_dict(spec_dict: dict) -> CompiledSpec:
     _compile_roles(spec_dict.get("roles", {}), spec)
     _compile_dependencies(spec_dict.get("dependencies", []), spec)
 
-    # Expand access map into norms before compiling
+    # Expand access map into norms for every role
     norms = list(spec_dict.get("norms", []))
-    norms.extend(_expand_access_map(spec_dict.get("access", {})))
+    access = spec_dict.get("access", {})
+    roles = list(spec_dict.get("roles", {}).keys()) or ["agent"]
+    for role in roles:
+        norms.extend(_expand_access_map(access, role=role))
     _compile_norms(norms, spec)
 
     _compile_rules(spec_dict.get("rules", []), spec)
@@ -70,7 +73,7 @@ def _compile_dependencies(deps: list, spec: CompiledSpec) -> None:
 def _compile_norms(norms: list, spec: CompiledSpec) -> None:
     """Compile conditional norms to cond/5 facts.
 
-    Handles both raw Prolog-syntax norms and high-level shorthand types:
+    Handles both raw term-syntax norms and high-level shorthand types:
     - scope: forbid writes outside a given directory prefix
     - readonly: forbid writes matching any of a list of path prefixes
     - required_before: block a command until an achievement exists
@@ -244,7 +247,7 @@ def _ensure_in_any_scope_rule(spec: CompiledSpec) -> None:
 
 
 def _compile_rules(rules: list, spec: CompiledSpec) -> None:
-    """Pass through Prolog rules verbatim."""
+    """Pass through user-defined rules verbatim."""
     for rule in rules:
         rule = rule.strip()
         if not rule.endswith("."):
@@ -289,5 +292,5 @@ def _expand_access_map(access: dict, role: str = "agent") -> list[dict]:
 
 
 def _to_prolog_list(items: list[str]) -> str:
-    """Convert a Python list to a Prolog list literal."""
+    """Convert a Python list to a bracketed list literal: [a, b, c]."""
     return "[" + ", ".join(str(item) for item in items) + "]"

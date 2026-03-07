@@ -1,7 +1,7 @@
 """In-memory fact database and condition evaluator.
 
-Supports the subset of Prolog-like operations used by the governance rules:
-pattern-matching queries, negation-as-failure, atom_concat, user-defined rules.
+Supports pattern-matching queries, negation-as-failure, string operations,
+path matching, and user-defined rules for governance condition evaluation.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ class FactDatabase:
 class ConditionEvaluator:
     """Evaluates governance conditions against a fact database.
 
-    Supports the subset of Prolog used in org spec conditions:
+    Supports the operations used in org spec conditions:
     - not(Goal) / negation-as-failure
     - atom_concat(A, B, C) — prefix/suffix checking
     - member(X, List) — list membership
@@ -294,7 +294,7 @@ class ConditionEvaluator:
         lst = apply_subst(lst, subst)
         elem = apply_subst(elem, subst)
 
-        # Traverse Prolog-style list: .(Head, Tail)
+        # Traverse linked list: .(Head, Tail)
         results = []
         current = lst
         while isinstance(current, Term) and current.functor == "." and len(current.args) == 2:

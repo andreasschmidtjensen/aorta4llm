@@ -390,6 +390,67 @@ class TestPostToolUseAchievements:
         assert r2["decision"] == "block"
 
 
+class TestGovernanceCommandBlocking:
+    """Mutating aorta commands are blocked; read-only ones are allowed."""
+
+    def test_aorta_reset_blocked(self, hook):
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "aorta reset --org-spec .aorta/spec.yaml"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "governance commands" in result["reason"]
+
+    def test_aorta_init_blocked(self, hook):
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "aorta init --template safe-agent"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_aorta_allow_once_blocked(self, hook):
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "aorta allow-once --org-spec .aorta/spec.yaml --path .env"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+
+    def test_aorta_status_allowed(self, hook):
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "aorta status --org-spec .aorta/spec.yaml"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+    def test_aorta_permissions_allowed(self, hook):
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "aorta permissions --org-spec .aorta/spec.yaml"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+    def test_aorta_explain_allowed(self, hook):
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "aorta explain --org-spec .aorta/spec.yaml --tool Write --path x.py"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+    def test_aorta_validate_allowed(self, hook):
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "aorta validate .aorta/spec.yaml"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+    def test_aorta_doctor_allowed(self, hook):
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "aorta doctor"}},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+
 class TestSystemPromptInjection:
     """Tests for system prompt generation from obligations."""
 

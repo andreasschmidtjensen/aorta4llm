@@ -1,4 +1,4 @@
-"""Tests for the YAML -> Prolog compiler."""
+"""Tests for the YAML org spec compiler."""
 
 import pytest
 

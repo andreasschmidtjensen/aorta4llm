@@ -1,10 +1,12 @@
-"""Tests for soft block event logging."""
+"""Tests for soft block event logging and message truncation."""
 
 import json
 
 import yaml
 
-from integration.hooks import GovernanceHook
+from integration.hooks import (
+    GovernanceHook, _truncate_reason, _shorten_block_reason, _display_action,
+)
 
 
 class TestSoftBlockLogging:
@@ -124,7 +126,7 @@ class TestHardBlockOverridesSoft:
         cmd = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'test'"}}
         result = hook.pre_tool_use(cmd, agent="dev")
         assert result["decision"] == "block"
-        assert "SOFT BLOCK" in result["reason"]
+        assert result["reason"].startswith("SOFT BLOCK:")
 
     def test_soft_retry_approved_after_tests_pass(self, tmp_path):
         """After tests pass, the soft block retry should be approved."""
@@ -165,3 +167,65 @@ class TestHardBlockOverridesSoft:
         assert result["decision"] == "block"
         assert "requires 'tests_passing'" in result["reason"]
         assert "SOFT BLOCK" not in result["reason"]
+
+
+class TestTruncateReason:
+
+    def test_short_reason_unchanged(self):
+        reason = "command contains 'git commit'"
+        assert _truncate_reason(reason) == reason
+
+    def test_long_reason_truncated(self):
+        reason = "x" * 300
+        result = _truncate_reason(reason)
+        assert len(result) == 203  # 200 + "..."
+        assert result.endswith("...")
+
+    def test_newlines_collapsed(self):
+        reason = "execute_command(git commit -m 'feat:\nsome long\nmessage') blocked"
+        result = _truncate_reason(reason)
+        assert "\n" not in result
+
+    def test_custom_max_len(self):
+        reason = "x" * 50
+        result = _truncate_reason(reason, max_len=20)
+        assert len(result) == 23  # 20 + "..."
+
+
+class TestShortenBlockReason:
+
+    def test_extracts_tail_from_engine_reason(self):
+        reason = "execute_command(git commit -m 'test') blocked for dev (role: agent): command contains 'git commit'"
+        assert _shorten_block_reason(reason) == "command contains 'git commit'"
+
+    def test_extracts_tail_from_scope_reason(self):
+        reason = "write_file(README.md) blocked for dev (role: agent): path is outside allowed scopes ['src/']"
+        assert _shorten_block_reason(reason) == "path is outside allowed scopes ['src/']"
+
+    def test_extracts_tail_from_required_before(self):
+        reason = "execute_command(git commit -m 'x') blocked for dev (role: agent): requires 'tests_passing' to be achieved first"
+        assert _shorten_block_reason(reason) == "requires 'tests_passing' to be achieved first"
+
+    def test_fallback_for_plain_reason(self):
+        reason = "agents cannot run governance commands"
+        assert _shorten_block_reason(reason) == reason
+
+    def test_long_heredoc_command_not_echoed(self):
+        heredoc = "git commit -m \"$(cat <<'EOF'\nfeat: long\n\nmultiline message\nEOF\n)\""
+        reason = f"execute_command({heredoc}) blocked for dev (role: agent): command contains 'git commit'"
+        assert _shorten_block_reason(reason) == "command contains 'git commit'"
+
+
+class TestDisplayAction:
+
+    def test_write_file_with_path(self):
+        assert _display_action("write_file", "README.md") == "Write to README.md"
+
+    def test_read_file_with_path(self):
+        assert _display_action("read_file", ".env") == "Read .env"
+
+    def test_execute_command_no_path(self):
+        assert _display_action("execute_command", "") == "Bash"
+
+    def test_unknown_action(self):
+        assert _display_action("custom_action", "x.py") == "custom_action x.py"

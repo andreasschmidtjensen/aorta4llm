@@ -67,13 +67,25 @@ def _add_norm(norm: dict, org_spec_arg: str | None, notify: str) -> None:
 
 
 def run_protect(args):
-    norm = {"type": "protected", "role": args.role, "paths": args.paths}
-    _add_norm(norm, args.org_spec, f"protected norm for {args.paths}")
+    spec_path = find_org_spec(args.org_spec)
+    spec = load_spec(spec_path)
+    access = spec.setdefault("access", {})
+    for p in args.paths:
+        access[p] = "no-access"
+    save_spec(spec_path, spec)
+    rebuild_hooks(spec, spec_path)
+    print(f"Set no-access for {args.paths} in {spec_path}")
 
 
 def run_readonly(args):
-    norm = {"type": "readonly", "role": args.role, "paths": args.paths}
-    _add_norm(norm, args.org_spec, f"readonly norm for {args.paths}")
+    spec_path = find_org_spec(args.org_spec)
+    spec = load_spec(spec_path)
+    access = spec.setdefault("access", {})
+    for p in args.paths:
+        access[p] = "read-only"
+    save_spec(spec_path, spec)
+    rebuild_hooks(spec, spec_path)
+    print(f"Set read-only for {args.paths} in {spec_path}")
 
 
 def run_forbid(args):

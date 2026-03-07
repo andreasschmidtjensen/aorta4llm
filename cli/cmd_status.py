@@ -64,6 +64,7 @@ def run(args):
             "agents": agents,
             "achievements": achievements,
             "exceptions": exceptions,
+            "access": spec.get("access", {}),
             "norms": len(spec.get("norms", [])),
             "stats": {"checks": len(checks), "approved": approved, "blocked": blocked},
             "state_path": str(state_path),
@@ -86,6 +87,14 @@ def run(args):
     else:
         print("Agents: none registered")
     print()
+
+    # Access map
+    access = spec.get("access", {})
+    if access:
+        print(f"Access map ({len(access)} entries):")
+        for path, level in access.items():
+            print(f"  {path:20s} {level}")
+        print()
 
     # Norms
     norms = spec.get("norms", [])

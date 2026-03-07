@@ -9,7 +9,7 @@ from governance.terms import (
 
 
 class TestParseTerm:
-    """Test the Prolog-syntax term parser."""
+    """Test the term parser."""
 
     def test_parse_bare_atom(self):
         assert parse_term("hello") == Atom("hello")

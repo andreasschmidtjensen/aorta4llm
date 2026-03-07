@@ -51,14 +51,22 @@ def run(args):
     print(f"Action:   {action}({params.get('path', params.get('command', ''))})")
     print()
 
+    # Show access map if present.
+    access = spec.get("access", {})
+    if access:
+        print(f"Access map ({len(access)} entries):")
+        for path, level in access.items():
+            print(f"  {path:20s} {level}")
+        print()
+
     # Show all norms from the spec.
     norms = spec.get("norms", [])
     print(f"Norms ({len(norms)}):")
     for i, norm in enumerate(norms):
         ntype = norm.get("type", "?")
         role = norm.get("role", "?")
-        severity = f" [{norm['severity']}]" if norm.get("severity") else ""
-        print(f"  #{i+1} {ntype} (role: {role}){severity}")
+        severity = _effective_severity(norm)
+        print(f"  #{i+1} {ntype} (role: {role}) [{severity}]")
         _print_norm_detail(norm)
     print()
 
@@ -73,7 +81,10 @@ def run(args):
         reason = relevance["reason"]
         symbol = {"skip": "  ", "match": ">>", "no_match": "  "}[status]
         marker = {"skip": "SKIP", "match": "MATCH", "no_match": "PASS"}[status]
-        print(f"  {symbol} #{i+1} [{marker}] {reason}")
+        severity_tag = ""
+        if status == "match":
+            severity_tag = f" [{_effective_severity(norm)} block]"
+        print(f"  {symbol} #{i+1} [{marker}] {reason}{severity_tag}")
     print()
 
     # Final decision.
@@ -81,6 +92,14 @@ def run(args):
     print(f"Decision: {symbol}")
     if result.reason:
         print(f"Reason:   {result.reason}")
+
+
+def _effective_severity(norm: dict) -> str:
+    """Return the effective severity of a norm for display."""
+    if norm.get("severity"):
+        return norm["severity"]
+    # Norms that block by default are hard.
+    return "hard"
 
 
 def _print_norm_detail(norm: dict) -> None:
