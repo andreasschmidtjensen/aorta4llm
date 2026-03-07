@@ -32,7 +32,12 @@ def compile_spec_dict(spec_dict: dict) -> CompiledSpec:
 
     _compile_roles(spec_dict.get("roles", {}), spec)
     _compile_dependencies(spec_dict.get("dependencies", []), spec)
-    _compile_norms(spec_dict.get("norms", []), spec)
+
+    # Expand access map into norms before compiling
+    norms = list(spec_dict.get("norms", []))
+    norms.extend(_expand_access_map(spec_dict.get("access", {})))
+    _compile_norms(norms, spec)
+
     _compile_rules(spec_dict.get("rules", []), spec)
 
     return spec
@@ -220,7 +225,7 @@ def _compile_forbidden_command(norm: dict, spec: CompiledSpec) -> None:
     )
 
     if norm.get("severity") == "soft":
-        spec.facts.append(f"soft_norm({role}, execute_command(Cmd))")
+        spec.facts.append(f"soft_norm({role}, execute_command(Cmd), str_contains(Cmd, {quoted}))")
 
 
 def _ensure_in_scope_rule(spec: CompiledSpec) -> None:
@@ -245,6 +250,42 @@ def _compile_rules(rules: list, spec: CompiledSpec) -> None:
         if not rule.endswith("."):
             rule += "."
         spec.rules.append(rule)
+
+
+def _expand_access_map(access: dict, role: str = "agent") -> list[dict]:
+    """Expand an access map into norm dicts.
+
+    access:
+      src/:       read-write
+      config/:    read-only
+      .env:       no-access
+
+    Generates scope, readonly, and protected norms.
+    """
+    if not access:
+        return []
+
+    read_write = []
+    read_only = []
+    no_access = []
+
+    for path, level in access.items():
+        if level == "read-write":
+            read_write.append(path)
+        elif level == "read-only":
+            read_only.append(path)
+        elif level == "no-access":
+            no_access.append(path)
+
+    norms = []
+    if read_write:
+        norms.append({"type": "scope", "role": role, "paths": read_write})
+    if read_only:
+        norms.append({"type": "readonly", "role": role, "paths": read_only})
+    if no_access:
+        norms.append({"type": "protected", "role": role, "paths": no_access})
+
+    return norms
 
 
 def _to_prolog_list(items: list[str]) -> str:

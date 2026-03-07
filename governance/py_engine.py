@@ -60,10 +60,17 @@ def _describe_condition(cond: TermType, subst: Substitution) -> str:
             return f"command contains '{cond.args[1].value}'"
 
     if isinstance(cond, Term) and cond.functor == ",":
-        # Conjunction — describe the most relevant part
+        # Conjunction — skip internal helper names (cmd_matches_xxx)
+        left = cond.args[0]
+        right = cond.args[1]
+        left_is_helper = (
+            isinstance(left, Term) and left.functor.startswith("cmd_matches_")
+        )
+        if left_is_helper:
+            return _describe_condition(right, subst)
         parts = []
-        left_desc = _describe_condition(cond.args[0], subst)
-        right_desc = _describe_condition(cond.args[1], subst)
+        left_desc = _describe_condition(left, subst)
+        right_desc = _describe_condition(right, subst)
         if left_desc:
             parts.append(left_desc)
         if right_desc:
@@ -79,7 +86,7 @@ class PythonGovernanceEngine:
     _DYNAMIC_PREDICATES = [
         ("role", 2), ("obj", 2), ("dep", 3), ("cap", 2), ("cond", 5),
         ("rea", 2), ("norm", 5), ("viol", 4), ("achieved", 1),
-        ("deadline_reached", 1), ("current_scope", 1), ("soft_norm", 2),
+        ("deadline_reached", 1), ("current_scope", 1), ("soft_norm", 2), ("soft_norm", 3),
     ]
 
     def __init__(self):
@@ -396,7 +403,11 @@ class PythonGovernanceEngine:
         2. Check cond/5 facts directly — unify action with objective to bind variables
 
         Returns (blocking_objective, severity, reason) where severity is "hard" or "soft".
+        If multiple norms match, the hardest severity wins (hard > soft).
         """
+        # Collect all matching violations, then return the hardest.
+        matches: list[tuple[TermType, str, str]] = []  # (objective, severity, reason)
+
         # Path 1: Check activated norms
         for norm_args in self._facts.get_all("norm", 5):
             n_agent, n_role, n_deon, n_obj, n_deadline = norm_args
@@ -407,8 +418,8 @@ class PythonGovernanceEngine:
             if not (isinstance(n_deon, Atom) and n_deon.value == "forbidden"):
                 continue
             if unify(action, n_obj) is not None:
-                severity = self._get_norm_severity(role, n_obj)
-                return n_obj, severity, "active prohibition"
+                severity = self._get_norm_severity(role, n_obj, condition=None)
+                matches.append((n_obj, severity, "active prohibition"))
 
         # Path 2: Check conditional prohibitions directly
         for cond_args in self._facts.get_all("cond", 5):
@@ -430,14 +441,39 @@ class PythonGovernanceEngine:
             # Evaluate condition with bound variables
             bound_cond = apply_subst(c_cond, subst)
             if self._evaluator.evaluate_bool(bound_cond, subst):
-                severity = self._get_norm_severity(role, c_obj)
+                severity = self._get_norm_severity(role, c_obj, condition=bound_cond)
                 reason = _describe_condition(bound_cond, subst)
-                return c_obj, severity, reason
+                matches.append((c_obj, severity, reason))
 
-        return None, "hard", ""
+        if not matches:
+            return None, "hard", ""
 
-    def _get_norm_severity(self, role: str, objective: TermType) -> str:
-        """Check if a blocking norm is soft (confirmation-required)."""
+        # Hard blocks take priority over soft blocks.
+        for obj, sev, reason in matches:
+            if sev == "hard":
+                return obj, sev, reason
+        # All matches are soft — return the first.
+        return matches[0]
+
+    def _get_norm_severity(self, role: str, objective: TermType,
+                           condition: TermType | None = None) -> str:
+        """Check if a blocking norm is soft (confirmation-required).
+
+        Checks both arity-2 soft_norm(role, objective) and arity-3
+        soft_norm(role, objective, condition) facts. Arity-3 facts
+        require the condition to also match, preventing a soft
+        forbidden_command from making an unrelated hard norm appear soft.
+        """
+        # Arity-3: soft_norm with condition — must match both objective and condition
+        for soft_args in self._facts.get_all("soft_norm", 3):
+            s_role, s_obj, s_cond = soft_args
+            if not (isinstance(s_role, Atom) and s_role.value == role):
+                continue
+            if unify(objective, s_obj) is None:
+                continue
+            if condition is not None and unify(condition, s_cond) is not None:
+                return "soft"
+        # Arity-2: soft_norm without condition — matches on objective alone
         for soft_args in self._facts.get_all("soft_norm", 2):
             s_role, s_obj = soft_args
             if not (isinstance(s_role, Atom) and s_role.value == role):

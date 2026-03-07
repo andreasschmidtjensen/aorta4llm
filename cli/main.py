@@ -20,6 +20,14 @@ def main():
     from cli.cmd_allow_once import add_parser as add_allow_once
     from cli.cmd_explain import add_parser as add_explain
     from cli.cmd_watch import add_parser as add_watch
+    from cli.cmd_doctor import add_parser as add_doctor
+    from cli.cmd_protect import (
+        add_protect_parser, add_readonly_parser,
+        add_forbid_parser, add_require_parser,
+    )
+    from cli.cmd_norm import add_parser as add_remove_norm
+    from cli.cmd_add_template import add_parser as add_add_template
+    from cli.cmd_access import add_parser as add_access
 
     add_validate(sub)
     add_dry_run(sub)
@@ -30,6 +38,14 @@ def main():
     add_allow_once(sub)
     add_explain(sub)
     add_watch(sub)
+    add_doctor(sub)
+    add_protect_parser(sub)
+    add_readonly_parser(sub)
+    add_forbid_parser(sub)
+    add_require_parser(sub)
+    add_remove_norm(sub)
+    add_add_template(sub)
+    add_access(sub)
 
     args = parser.parse_args()
     if not args.command:

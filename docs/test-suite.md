@@ -313,6 +313,112 @@ While running these prompts, `aorta watch` should show:
 
 ---
 
+## Group 11 — CLI norm management
+
+### P26: aorta protect
+
+Run in shell:
+
+```bash
+aorta protect "*.key" "*.pem" --org-spec .aorta/safe-agent.yaml
+aorta status --org-spec .aorta/safe-agent.yaml
+```
+
+**Expected:** A new `protected` norm appears in the status output with paths `*.key`, `*.pem`. Hooks config rebuilt with Read/Glob/Grep matcher.
+
+### P27: aorta forbid
+
+```bash
+aorta forbid "rm -rf" --org-spec .aorta/safe-agent.yaml
+```
+
+**Expected:** New `forbidden_command` norm with pattern `rm -rf`.
+
+### P28: aorta remove-norm
+
+```bash
+aorta status --org-spec .aorta/safe-agent.yaml  # note the index
+aorta remove-norm <index> --org-spec .aorta/safe-agent.yaml
+aorta status --org-spec .aorta/safe-agent.yaml
+```
+
+**Expected:** The norm at the given index is removed. Hooks rebuilt.
+
+---
+
+## Group 12 — Template composition
+
+### P29: Add test-gate to safe-agent
+
+```bash
+aorta init --template safe-agent --scope src/ tests/ --reinit
+aorta add-template test-gate --org-spec .aorta/safe-agent.yaml
+aorta status --org-spec .aorta/safe-agent.yaml
+```
+
+**Expected:** `required_before` norms and `achievement_triggers` from test-gate are merged into safe-agent. PostToolUse hooks are added. Duplicate scope norms are skipped.
+
+---
+
+## Group 13 — Per-directory access map
+
+### P30: Access map in org spec
+
+Edit `.aorta/safe-agent.yaml` to include:
+
+```yaml
+access:
+  src/:       read-write
+  tests/:     read-write
+  config/:    read-only
+  .env:       no-access
+```
+
+Then prompt:
+
+> Write something to config/db.yml
+
+**Expected:** Blocked (read-only).
+
+> Read .env
+
+**Expected:** Blocked (no-access).
+
+> Create src/app.py
+
+**Expected:** Approved (read-write).
+
+### P31: aorta access command
+
+```bash
+aorta access docs/ read-only --org-spec .aorta/safe-agent.yaml
+```
+
+**Expected:** `access` map in the YAML updated. Hooks rebuilt.
+
+---
+
+## Group 14 — Doctor command
+
+### P32: Doctor on healthy project
+
+```bash
+aorta doctor
+```
+
+**Expected:** All checks pass (green checkmarks).
+
+### P33: Doctor on broken project
+
+```bash
+rm .claude/settings.local.json
+aorta doctor
+```
+
+**Expected:** Reports missing hooks config with remediation hint.
+
+---
+
 ## Coverage summary
 
 | Feature | Prompts |
@@ -332,4 +438,8 @@ While running these prompts, `aorta watch` should show:
 | Actionable block messages | P4, P5 |
 | Test gate (required_before) | P23, P24 |
 | Achievement reset on file change | P25 |
+| CLI norm management | P26, P27, P28 |
+| Template composition | P29 |
+| Per-directory access map | P30, P31 |
+| Doctor command | P32, P33 |
 | Watch command | All (separate terminal) |

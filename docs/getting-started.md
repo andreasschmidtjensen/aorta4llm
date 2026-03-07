@@ -218,6 +218,20 @@ aorta explain --org-spec .aorta/safe-agent.yaml \
 
 Shows each norm, whether it applies, and why it matches or doesn't.
 
+## Troubleshooting
+
+### Hooks not working (actions not blocked)
+
+Claude Code treats hook errors as non-blocking — if the `aorta` binary
+isn't found or the hook crashes, actions proceed silently. Run:
+
+    aorta doctor
+
+Common causes:
+- `aorta` not on PATH (install with `pip install aorta4llm` or `uv pip install aorta4llm`)
+- Stale hooks after reinstall (run `aorta init --reinit`)
+- Agent not registered (check `aorta status`)
+
 ## Limitations
 
 - **No content governance**: aorta blocks *writing to* `.env` but cannot prevent the agent from *reading* a file and pasting its contents elsewhere. Use `protected` norms to block reads of truly sensitive files.

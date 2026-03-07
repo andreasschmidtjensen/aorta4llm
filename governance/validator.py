@@ -93,6 +93,16 @@ def validate_spec(spec_dict: dict) -> ValidationResult:
 
         result.summary.append(f"{label}: {norm_type or '?'} on role '{role or '?'}'")
 
+    # Validate access map.
+    access = spec_dict.get("access", {})
+    if access:
+        valid_levels = {"read-write", "read-only", "no-access"}
+        for path, level in access.items():
+            if level not in valid_levels:
+                result.errors.append(f"access['{path}']: invalid level '{level}' (must be read-write, read-only, or no-access)")
+            else:
+                result.summary.append(f"access: '{path}' -> {level}")
+
     # Validate dependencies.
     for i, dep in enumerate(spec_dict.get("dependencies", [])):
         label = f"Dependency #{i + 1}"
