@@ -166,8 +166,9 @@ def run(args):
     events_rel = ".aorta/events.jsonl"
     needs_post = bool(spec.get("achievement_triggers"))
 
-    pre_cmd = f"aorta hook pre-tool-use --org-spec {spec_rel} --agent {"agent"} --events-path {events_rel}"
-    post_cmd = f"aorta hook post-tool-use --org-spec {spec_rel} --agent {"agent"} --events-path {events_rel}"
+    agent_name = "agent"
+    pre_cmd = f"aorta hook pre-tool-use --org-spec {spec_rel} --agent {agent_name} --events-path {events_rel}"
+    post_cmd = f"aorta hook post-tool-use --org-spec {spec_rel} --agent {agent_name} --events-path {events_rel}"
 
     # Write tools matcher — add Read/Glob/Grep if --strict or protected/no-access entries exist
     has_protected = any(n.get("type") == "protected" for n in spec.get("norms", []))
@@ -272,7 +273,7 @@ def run(args):
     if args.reinit:
         hook.clear_transient_state()
     hook.register_agent("agent", role, scope_str, reinit=args.reinit)
-    print(f"Registered agent '{"agent"}' as '{role}' with scope '{scope_str}'")
+    print(f"Registered agent '{agent_name}' as '{role}' with scope '{scope_str}'")
 
     # 7. Create slash commands for agent introspection.
     commands_dir = Path(".claude/commands")
@@ -290,7 +291,7 @@ def run(args):
     print(f"  Org spec:  {org_spec_dest}")
     print(f"  Hooks:     {settings_path}")
     print(f"  Events:    {events_rel}")
-    print(f"  Agent:     {"agent"} (role: {role}, scope: {scope_str})")
+    print(f"  Agent:     {agent_name} (role: {role}, scope: {scope_str})")
     print(f"  Commands:  /project:aorta-permissions, /project:aorta-status")
     if needs_post:
         print(f"  PostToolUse hooks enabled (achievement triggers detected)")
