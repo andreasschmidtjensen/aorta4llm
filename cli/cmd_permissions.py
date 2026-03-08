@@ -51,8 +51,18 @@ def run(args):
     if access:
         print("Access map:")
         for path, level in access.items():
-            read_ok = _check(hook, agent, "Read", path + "test")
-            write_ok = _check(hook, agent, "Write", path + "test")
+            # Build a test path that would match the access entry.
+            # For directories (src/), append a filename: src/test
+            # For glob patterns (*.key), expand to a concrete path: test.key
+            # For exact files (.env), use as-is
+            if "*" in path:
+                test_path = path.replace("**/*", "dir/test").replace("*", "test")
+            elif path.endswith("/"):
+                test_path = path + "test"
+            else:
+                test_path = path
+            read_ok = _check(hook, agent, "Read", test_path)
+            write_ok = _check(hook, agent, "Write", test_path)
             read_sym = "✓" if read_ok == "approve" else "✗"
             write_sym = "✓" if write_ok == "approve" else "✗"
             print(f"  {path:20s} {level:12s}  read: {read_sym}  write: {write_sym}")

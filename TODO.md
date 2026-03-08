@@ -43,6 +43,23 @@ A stricter mode could intercept PostToolUse responses for sensitive files and re
 
 **Decision:** Worth investigating but not urgent. The current warning is surprisingly effective in practice. Redaction adds complexity and risk of breaking legitimate reads.
 
+### Session-level soft block pre-approval
+
+After the user confirms a soft block once in a session, offer a way to pre-approve that command pattern for the remainder of the session. For example, after confirming `git commit`, subsequent commits could be auto-approved without another round-trip. This would reduce friction in long coding sessions where the user is actively present.
+
+**Options:**
+- A `--session-approve` flag on the soft block retry
+- An `aorta approve-session "git commit"` CLI command
+- Automatic after N confirmations in the same session
+
+Low priority — the current soft block UX is correct, just verbose for active sessions.
+
+### Wildcard/regex support for `safe_commands`
+
+Currently `safe_commands` requires enumerating each command variant. A pattern like `git *` (for all git subcommands) or regex support would reduce config maintenance for projects with many read-only tools.
+
+Low priority — the prefix-matching covers most cases and explicit enumeration is safer.
+
 ## Known Limitations
 
 ### Command pattern matching and flags-before-subcommand

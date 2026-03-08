@@ -421,6 +421,14 @@ class GovernanceHook:
             short_reason = _shorten_block_reason(result.reason)
             display = _display_action(action, path)
             user_reason = f"{display} blocked: {short_reason}"
+            # For write blocks from access-map rules (not scope violations),
+            # show the allowed write scopes so the agent knows where it CAN write.
+            if (action == "write_file" and path
+                    and "outside allowed scopes" not in short_reason):
+                scope = params.get("scope", "")
+                if scope:
+                    scopes = scope.split()
+                    user_reason += f"\n  Allowed write scopes: {', '.join(scopes)}"
             log({
                 "type": "check", "agent": agent_id, "role": role,
                 "action": action, "path": params.get("path", ""),

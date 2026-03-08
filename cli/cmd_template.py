@@ -66,8 +66,8 @@ def run_add(args):
     with open(template_path) as f:
         template = yaml.safe_load(f)
 
-    added_norms = 0
-    added_triggers = 0
+    added_norms = []
+    added_triggers = []
     existing_keys = {_norm_key(n) for n in spec.get("norms", [])}
 
     # Merge norms
@@ -85,7 +85,7 @@ def run_add(args):
                 continue
         spec.setdefault("norms", []).append(norm)
         existing_keys.add(key)
-        added_norms += 1
+        added_norms.append(norm)
 
     # Merge achievement_triggers
     existing_marks = {t.get("marks") for t in spec.get("achievement_triggers", [])}
@@ -95,7 +95,7 @@ def run_add(args):
             continue
         spec.setdefault("achievement_triggers", []).append(trigger)
         existing_marks.add(trigger.get("marks"))
-        added_triggers += 1
+        added_triggers.append(trigger)
 
     # Merge roles (union of objectives and capabilities)
     for role_name, role_def in template.get("roles", {}).items():
@@ -121,6 +121,29 @@ def run_add(args):
     rebuild_hooks(spec, spec_path)
 
     print(f"Merged template '{args.template}' into {spec_path}")
-    print(f"  Norms added: {added_norms}")
-    if added_triggers:
-        print(f"  Triggers added: {added_triggers}")
+    for norm in added_norms:
+        ntype = norm.get("type", "?")
+        role = norm.get("role", "?")
+        if ntype == "required_before":
+            pattern = norm.get("command_pattern", "?")
+            req = norm.get("requires", "?")
+            print(f"  Added norm: {ntype} ({role}) — '{pattern}' requires {req}")
+        elif ntype == "forbidden_command":
+            pattern = norm.get("command_pattern", "?")
+            severity = norm.get("severity", "hard")
+            print(f"  Added norm: {ntype} ({role}) [{severity}] — '{pattern}'")
+        else:
+            print(f"  Added norm: {ntype} ({role})")
+    for trigger in added_triggers:
+        marks = trigger.get("marks", "?")
+        tool = trigger.get("tool", "?")
+        pattern = trigger.get("command_pattern", "")
+        exit_code = trigger.get("exit_code", "")
+        detail = f"{tool}"
+        if pattern:
+            detail += f", pattern: {pattern}"
+        if exit_code != "":
+            detail += f", exit code {exit_code}"
+        print(f"  Added trigger: {marks} ({detail})")
+    if not added_norms and not added_triggers:
+        print("  Nothing new to add.")
