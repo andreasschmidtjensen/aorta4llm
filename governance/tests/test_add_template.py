@@ -1,9 +1,9 @@
-"""Tests for aorta add-template command."""
+"""Tests for aorta template commands."""
 
 import yaml
 import pytest
 
-from cli.cmd_add_template import _norm_key
+from cli.cmd_template import run_add, run_list, _norm_key
 
 
 def _make_spec(tmp_path, spec_dict):
@@ -32,7 +32,7 @@ class TestNormKey:
         assert k1 != k2
 
 
-class TestAddTemplate:
+class TestTemplateAdd:
     def test_merges_norms(self, tmp_path, monkeypatch):
         spec_path = _make_spec(tmp_path, {
             "organization": "test",
@@ -48,9 +48,8 @@ class TestAddTemplate:
         })
         monkeypatch.chdir(tmp_path)
 
-        from cli.cmd_add_template import run
         args = type("Args", (), {"template": "test-gate", "org_spec": str(spec_path)})()
-        run(args)
+        run_add(args)
 
         with open(spec_path) as f:
             spec = yaml.safe_load(f)
@@ -76,9 +75,8 @@ class TestAddTemplate:
         })
         monkeypatch.chdir(tmp_path)
 
-        from cli.cmd_add_template import run
         args = type("Args", (), {"template": "test-gate", "org_spec": str(spec_path)})()
-        run(args)
+        run_add(args)
 
         with open(spec_path) as f:
             spec = yaml.safe_load(f)
@@ -100,9 +98,8 @@ class TestAddTemplate:
         })
         monkeypatch.chdir(tmp_path)
 
-        from cli.cmd_add_template import run
         args = type("Args", (), {"template": "test-gate", "org_spec": str(spec_path)})()
-        run(args)
+        run_add(args)
 
         with open(spec_path) as f:
             spec = yaml.safe_load(f)
@@ -119,7 +116,15 @@ class TestAddTemplate:
         })
         monkeypatch.chdir(tmp_path)
 
-        from cli.cmd_add_template import run
         args = type("Args", (), {"template": "nonexistent", "org_spec": str(spec_path)})()
         with pytest.raises(SystemExit):
-            run(args)
+            run_add(args)
+
+
+class TestTemplateList:
+    def test_template_list(self, capsys):
+        run_list(type("Args", (), {})())
+        output = capsys.readouterr().out
+        assert "safe-agent" in output
+        assert "test-gate" in output
+        assert "minimal" in output

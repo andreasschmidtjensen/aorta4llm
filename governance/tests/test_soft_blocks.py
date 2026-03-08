@@ -55,6 +55,34 @@ class TestSoftBlockLogging:
         assert checks[-1]["decision"] == "approve"
         assert checks[-1]["severity"] == "soft"
 
+    def test_retry_with_whitespace_difference_matches(self, tmp_path):
+        """Retry with reformatted heredoc whitespace should match the original."""
+        hook = self._make_hook(tmp_path)
+        cmd1 = {"tool_name": "Bash", "tool_input": {
+            "command": "git commit -m \"$(cat <<'EOF'\nfeat: test\n\nEOF\n)\""
+        }}
+        cmd2 = {"tool_name": "Bash", "tool_input": {
+            "command": "git commit -m \"$(cat <<'EOF'\nfeat: test\nEOF\n)\""
+        }}
+
+        result1 = hook.pre_tool_use(cmd1, agent="dev")
+        assert result1["decision"] == "block"
+
+        result2 = hook.pre_tool_use(cmd2, agent="dev")
+        assert result2["decision"] == "approve"
+
+    def test_different_commands_dont_match(self, tmp_path):
+        """git commit -m 'x' and git commit -am 'x' should NOT match."""
+        hook = self._make_hook(tmp_path)
+        cmd1 = {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}}
+        cmd2 = {"tool_name": "Bash", "tool_input": {"command": "git commit -am 'x'"}}
+
+        result1 = hook.pre_tool_use(cmd1, agent="dev")
+        assert result1["decision"] == "block"
+
+        result2 = hook.pre_tool_use(cmd2, agent="dev")
+        assert result2["decision"] == "block"  # different command, not a retry
+
 
 class TestHardBlockOverridesSoft:
     """Hard blocks must take priority over soft blocks on the same command.

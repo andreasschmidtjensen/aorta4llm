@@ -449,11 +449,16 @@ class PythonGovernanceEngine:
             return None, "hard", ""
 
         # Hard blocks take priority over soft blocks.
-        for obj, sev, reason in matches:
-            if sev == "hard":
-                return obj, sev, reason
-        # All matches are soft — return the first.
-        return matches[0]
+        hard = [m for m in matches if m[1] == "hard"]
+        soft = [m for m in matches if m[1] == "soft"]
+        bucket = hard if hard else soft
+
+        # Within same severity, prefer specific reasons (readonly/protected
+        # prefix match) over generic scope violations.
+        specific = [m for m in bucket if "outside allowed scope" not in m[2]]
+        if specific:
+            return specific[0]
+        return bucket[0]
 
     def _get_norm_severity(self, role: str, objective: TermType,
                            condition: TermType | None = None) -> str:

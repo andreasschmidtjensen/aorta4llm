@@ -26,7 +26,7 @@ def main():
         add_forbid_parser, add_require_parser,
     )
     from cli.cmd_norm import add_parser as add_remove_norm
-    from cli.cmd_add_template import add_parser as add_add_template
+    from cli.cmd_template import add_parser as add_template
     from cli.cmd_access import add_parser as add_access
     from cli.cmd_permissions import add_parser as add_permissions
 
@@ -45,7 +45,7 @@ def main():
     add_forbid_parser(sub)
     add_require_parser(sub)
     add_remove_norm(sub)
-    add_add_template(sub)
+    add_template(sub)
     add_access(sub)
     add_permissions(sub)
 

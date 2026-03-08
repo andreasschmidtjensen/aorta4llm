@@ -161,3 +161,17 @@ class TestAccessMapEndToEnd:
             agent="dev",
         )
         assert result["decision"] == "block"
+
+    def test_read_only_block_reason_is_specific(self, tmp_path):
+        """When both scope and read-only match, reason should mention prefix, not scope."""
+        hook = self._make_hook(tmp_path, {
+            "src/": "read-write",
+            "config/": "read-only",
+        })
+        result = hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "config/db.yml"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "forbidden prefix" in result["reason"]
+        assert "outside allowed scope" not in result["reason"]

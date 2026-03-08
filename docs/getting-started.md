@@ -28,9 +28,9 @@ Multiple scopes are supported:
 aorta init --template safe-agent --scope src/ tests/
 ```
 
-The `safe-agent` template uses `no-access` entries for `.env` and `secrets/`, so Read/Glob/Grep tools are automatically hooked. Use `--strict` to hook reads even without `no-access` entries.
+The `safe-agent` template uses `no-access` entries for `.env`, `secrets/`, `*.key`, `*.pem`, and `*.secret`, so Read/Glob/Grep tools are automatically hooked. Use `--strict` to hook reads even without `no-access` entries.
 
-Available templates (`aorta init --list-templates`):
+Available templates (`aorta template list`):
 - **safe-agent** — single agent scoped to a directory
 - **test-gate** — must pass tests before committing
 - **minimal** — scope-only, no norms or bash analysis (built-in)
@@ -59,8 +59,8 @@ access:
   secrets/:   no-access
   "*.key":    no-access
   "*.pem":    no-access
+  "*.secret": no-access
   config/:    read-only
-  "**/*.secret": read-only
 
 # Norms — for command-level governance and advanced rules.
 norms:

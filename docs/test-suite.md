@@ -352,7 +352,7 @@ aorta status --org-spec .aorta/safe-agent.yaml
 
 ```bash
 aorta init --template safe-agent --scope src/ tests/ --reinit
-aorta add-template test-gate --org-spec .aorta/safe-agent.yaml
+aorta template add test-gate --org-spec .aorta/safe-agent.yaml
 aorta status --org-spec .aorta/safe-agent.yaml
 ```
 

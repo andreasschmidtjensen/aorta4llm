@@ -659,9 +659,15 @@ class GovernanceHook:
 
     @staticmethod
     def _soft_block_key(params: dict) -> str:
-        """Generate a cache key for soft block deduplication."""
+        """Generate a cache key for soft block deduplication.
+
+        Normalizes whitespace so that semantically identical commands
+        (differing only in heredoc formatting, trailing newlines, etc.)
+        produce the same key.
+        """
         raw = params.get("command", "") or params.get("path", "")
-        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+        normalized = " ".join(raw.split())
+        return hashlib.sha256(normalized.encode()).hexdigest()[:16]
 
     def _log(self, event: dict) -> None:
         """Log an event tagged with the org spec name."""

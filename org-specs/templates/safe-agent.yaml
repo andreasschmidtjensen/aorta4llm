@@ -25,6 +25,9 @@ access:
   .env.local: no-access
   secrets/:   no-access
   .ssh/:      no-access
+  "*.key":    no-access
+  "*.pem":    no-access
+  "*.secret": no-access
   config/:    read-only
 
 norms:

@@ -1,4 +1,4 @@
-"""aorta add-template — merge a template's norms into an existing org spec."""
+"""aorta template — manage governance templates (add, list)."""
 
 from pathlib import Path
 
@@ -9,10 +9,35 @@ from cli.spec_utils import find_org_spec, load_spec, save_spec, rebuild_hooks
 
 
 def add_parser(subparsers):
-    p = subparsers.add_parser("add-template", help="Merge a template into an existing org spec")
-    p.add_argument("template", help="Template name (e.g., test-gate)")
-    p.add_argument("--org-spec", default=None)
-    p.set_defaults(func=run)
+    p = subparsers.add_parser("template", help="Manage governance templates")
+    template_sub = p.add_subparsers(dest="template_command")
+
+    # aorta template list
+    list_p = template_sub.add_parser("list", help="List available templates")
+    list_p.set_defaults(func=run_list)
+
+    # aorta template add
+    add_p = template_sub.add_parser("add", help="Merge a template into an existing org spec")
+    add_p.add_argument("template", help="Template name (e.g., test-gate)")
+    add_p.add_argument("--org-spec", default=None)
+    add_p.set_defaults(func=run_add)
+
+    p.set_defaults(func=lambda args: _template_help(p, args))
+
+
+def _template_help(parser, args):
+    if not getattr(args, "template_command", None):
+        parser.print_help()
+        raise SystemExit(1)
+    args.func(args)
+
+
+def run_list(args):
+    templates = list_templates()
+    print("Available templates:")
+    for t in templates:
+        print(f"  {t['name']:20s} {t['description']}")
+    print(f"  {'minimal':20s} Scope-only — no norms, no bash analysis")
 
 
 def _norm_key(norm: dict) -> tuple:
@@ -28,7 +53,7 @@ def _norm_key(norm: dict) -> tuple:
     return (ntype, role, str(norm))
 
 
-def run(args):
+def run_add(args):
     template_path = TEMPLATES_DIR / f"{args.template}.yaml"
     if not template_path.exists():
         print(f"Template not found: {args.template}")
