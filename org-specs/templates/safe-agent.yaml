@@ -8,6 +8,7 @@
 
 organization: safe_agent
 bash_analysis: true
+safe_commands: ["pytest", "git status", "git diff", "git log", "npm test"]
 
 roles:
   agent:

@@ -1,23 +1,26 @@
-# aorta4llm — Deterministic Governance for AI Agent Teams
+# aorta4llm — Deterministic Governance for Claude Code
 
-When you deploy multiple LLM agents, you need to control who can do what. System prompts are suggestions — agents can ignore them. Tool allowlists are static — they can't express "allowed after the architect approves." And nobody tracks whether the reviewer actually reviewed.
+You tell Claude Code "don't touch .env" in a system prompt. It works — until context compaction drops that instruction, or the agent reasons itself into an exception. System prompts are suggestions. Tool calls are actions.
 
-aorta4llm moves governance outside the context window. An organizational spec defines roles, prohibitions, and obligations. A logic engine enforces them deterministically on every tool call — no LLM decides whether a rule applies.
+aorta4llm enforces governance at the tool call layer. A YAML spec declares what the agent can read, write, and execute. A logic engine checks every tool call deterministically — no LLM decides whether a rule applies. The agent cannot modify its own governance, cannot disable the hooks, and cannot prompt its way past a hard block.
 
 ## The problem
 
-**Prompts aren't enforcement.** Telling an agent "you are a reviewer, do not modify source files" in a system prompt is a suggestion. The agent can still call the Write tool on a `.py` file. Context window pressure, long conversations, and ambiguous instructions make compliance unreliable.
+**Prompts aren't enforcement.** Telling an agent "do not modify source files" in a system prompt is a suggestion. The agent can still call the Write tool. Context window pressure, long conversations, and ambiguous instructions make compliance unreliable.
 
-**Static allowlists can't express conditions.** "The implementer may write to `src/auth/` but only after the architecture has been reviewed" requires runtime state. A JSON config of `{allowed_tools: ["Write"]}` cannot express this.
+**Static allowlists can't express conditions.** "Commit is allowed only after tests pass" requires runtime state tracking. A JSON config of `{allowed_tools: ["Write"]}` cannot express this.
 
-**Nobody tracks obligations.** "The reviewer must complete their review before the deadline" is a real organizational requirement. When it's violated, you need an auditable record — not a hope that the agent followed instructions.
+**There's no audit trail.** When the agent writes to the wrong file or runs a destructive command, you find out after the fact. There's no record of what was blocked, what was approved, or what the agent tried to do.
 
 ## What this does
 
-- **Conditional prohibitions**: An implementer scoped to `src/auth/` is blocked from writing to `src/api/`. A reviewer cannot modify `.py/.ts/.js` files. An implementer cannot write code until the architecture is reviewed. All enforced before the tool call executes.
-- **Obligations with deadlines**: After implementing a feature, tests must pass before requesting review. After accepting a review, the reviewer must document findings before the deadline. The system tracks activation, fulfillment, and violation.
-- **Violation detection**: When a deadline is reached and the obligation is unfulfilled, a formal violation is recorded. Queryable, auditable, actionable.
-- **Scope enforcement**: Each agent is assigned a file path scope. Writes outside scope are deterministically blocked — not suggested against, blocked.
+- **File access control**: Declare which paths are read-write, read-only, or no-access. Writes outside scope are deterministically blocked — not suggested against, blocked.
+- **Self-protection**: The agent cannot edit its own governance config (`.aorta/`) or hook configuration (`.claude/`). Cannot run `aorta reset` or `aorta init` via Bash.
+- **Sensitive content warnings**: When the agent reads a read-only file (e.g. `config/`), a governance notice tells it not to hardcode values. In testing, Claude refused to embed a database password and offered runtime loading instead.
+- **Bash analysis**: Shell commands are analyzed for hidden file writes (`cp`, `mv`, `>`, `tee`). `cp src/app.py /tmp/leak.py` is blocked even though the Bash tool itself is allowed.
+- **Conditional enforcement**: "Commit only after tests pass" with automatic achievement tracking. Tests pass → achievement granted → commit unlocked → file change → achievement reset.
+- **Soft blocks**: Git commit/push are soft-blocked — the agent must ask the user for confirmation before proceeding. Guards against post-compaction hallucinated commits.
+- **Audit trail**: Every check (approved or blocked) is logged to `.aorta/events.jsonl`. Monitor in real-time with `aorta watch`.
 
 ## See it in action
 
@@ -65,7 +68,7 @@ This creates `.aorta/safe-agent.yaml` and `.claude/settings.local.json` with hoo
 
 ### 3. Org spec anatomy
 
-The generated spec uses shorthand norm types that compile to the underlying engine:
+The access map is the primary interface for file governance. Norms handle command-level rules:
 
 ```yaml
 organization: safe_agent
@@ -76,27 +79,33 @@ roles:
     objectives: [task_complete]
     capabilities: [read_file, write_file, execute_command]
 
+# File access — read-write, read-only, or no-access per path
+access:
+  src/:       read-write    # agent can read and write
+  tests/:     read-write
+  config/:    read-only     # agent can read but not write
+  .env:       no-access     # agent cannot read or write
+  .env.local: no-access
+  secrets/:   no-access
+
+# Command-level governance
 norms:
-  # Block writes outside assigned scope
-  - role: agent
-    type: scope
-    paths: [src/, tests/]
-
-  # Block reads AND writes to secrets
-  - role: agent
-    type: protected
-    paths: [.env, .env.local, secrets/]
-
-  # Block writes to config (reads still allowed)
-  - role: agent
-    type: readonly
-    paths: [config/]
-
-  # Soft-block git commit/push (agent must confirm with user)
-  - role: agent
-    type: forbidden_command
+  - type: forbidden_command
+    role: agent
     command_pattern: "git commit"
+    severity: soft           # agent must ask user before committing
+
+  - type: forbidden_command
+    role: agent
+    command_pattern: "git push"
     severity: soft
+```
+
+Manage access from the CLI:
+
+```bash
+aorta access docs/ read-only
+aorta protect "*.key" "*.pem"    # shorthand for no-access
 ```
 
 ### 4. Templates

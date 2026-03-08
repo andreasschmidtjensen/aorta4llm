@@ -149,7 +149,7 @@ For command-level governance and advanced rules, use explicit norms:
 
 Any norm can have `severity: soft` (confirmation-required) or `severity: hard` (default, always denied).
 
-Advanced: You can still use `scope`, `protected`, and `readonly` norm types directly in the `norms:` list. The `access` map is syntactic sugar that generates these norms internally.
+For file-level access control, use the `access` map (see above) — it's the recommended interface. The `norms:` list is for command-level governance and conditional rules.
 
 ## Soft vs hard blocks
 
@@ -192,6 +192,32 @@ When Claude Code calls a tool (Write, Edit, Bash, etc.):
    - LLM fallback: ambiguous commands (variable expansion, complex pipes) go to Haiku (~5s)
    - Each extracted write path is checked against file-write norms
 6. **Block or approve** — hard blocks deny; soft blocks prompt for confirmation
+
+## Safe commands (bash analysis fast path)
+
+When `bash_analysis` is enabled, every Bash command goes through write-path extraction. Commands on the `safe_commands` list skip this entirely — no heuristic, no LLM call, zero latency.
+
+The default list covers common read-only commands:
+
+```yaml
+safe_commands: ["pytest", "git status", "git diff", "git log", "npm test"]
+```
+
+If you use custom test runners or build tools, add them to avoid the ~5s LLM analysis hit:
+
+```yaml
+safe_commands:
+  - pytest
+  - git status
+  - git diff
+  - git log
+  - npm test
+  - cargo test
+  - make check
+  - jest
+```
+
+Edit `safe_commands` directly in your `.aorta/<template>.yaml`. These are prefix-matched: `"pytest"` covers `pytest tests/ -v`, `"git status"` covers `git status --short`, etc.
 
 ## Slash commands
 

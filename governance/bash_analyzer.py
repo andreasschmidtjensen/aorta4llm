@@ -45,6 +45,23 @@ class BashAnalysis:
     summary: str = ""
 
 
+def _normalize_git_flags(command: str) -> str:
+    """Strip git global options (like -C <path>) for safe command matching.
+
+    'git -C /path status' -> 'git status'
+    """
+    if "git " not in command:
+        return command
+    return re.sub(
+        r"\bgit"
+        r"(\s+(?:-[Cc]\s+\S+|--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+"
+        r"|--no-pager|--bare|--no-replace-objects|--literal-pathspecs"
+        r"|--no-optional-locks))+",
+        "git",
+        command,
+    )
+
+
 def _is_safe_command(command: str, extra_safe: frozenset[str] | None = None) -> bool:
     """Check if command is obviously read-only (no LLM needed)."""
     stripped = command.strip()
@@ -54,6 +71,9 @@ def _is_safe_command(command: str, extra_safe: frozenset[str] | None = None) -> 
     # If it contains redirects, pipes to file, or semicolons, analyze it.
     if re.search(r"[>|;`$&]", stripped):
         return False
+
+    # Normalize git flags before tokenizing (git -C /path status -> git status).
+    stripped = _normalize_git_flags(stripped)
 
     # Get first token.
     try:
@@ -102,8 +122,10 @@ def _heuristic_analyze(command: str) -> BashAnalysis | None:
     stripped = command.strip()
 
     # Known commands that don't produce user file writes.
+    # Normalize git flags so 'git -C /path commit' matches 'git commit'.
+    normalized = _normalize_git_flags(stripped)
     for prefix in _SAFE_WRITE_PREFIXES:
-        if stripped.startswith(prefix):
+        if normalized.startswith(prefix):
             return BashAnalysis(summary=f"known safe command: {prefix}")
 
     # Variable expansion / subshells — ambiguous, bail to LLM.

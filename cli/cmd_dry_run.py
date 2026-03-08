@@ -31,10 +31,30 @@ def _check_governance_command(command: str) -> str | None:
     return None
 
 
+def _detect_project_root_from_spec(org_spec: str) -> str | None:
+    """Detect project root from org spec path (for path normalization in dry-run)."""
+    from integration.hooks import _detect_project_root
+    from pathlib import Path
+    return _detect_project_root(Path(org_spec))
+
+
+def _make_path_relative(path: str, org_spec: str) -> str:
+    """Normalize absolute paths to relative for dry-run display and checking."""
+    import os
+    if not path or not os.path.isabs(path):
+        return path
+    root = _detect_project_root_from_spec(org_spec)
+    if root:
+        prefix = root.rstrip("/") + "/"
+        if path.startswith(prefix):
+            return path[len(prefix):]
+    return path
+
+
 def run(args):
     from cli.spec_utils import find_org_spec
     from governance.service import GovernanceService
-    from integration.hooks import TOOL_ACTION_MAP
+    from integration.hooks import TOOL_ACTION_MAP, _normalize_git_cmd
 
     org_spec = str(find_org_spec(args.org_spec))
     service = GovernanceService(org_spec)
@@ -52,7 +72,7 @@ def run(args):
 
         params = {}
         if args.tool == "Bash" and args.bash_command:
-            params["command"] = args.bash_command
+            params["command"] = _normalize_git_cmd(args.bash_command)
         elif args.path:
             params["path"] = args.path
 
@@ -86,9 +106,11 @@ def run(args):
                 print(f"  Reason:       {gc_reason}")
                 return
 
+            # Normalize git commands for pattern matching (strips -C <path> etc.)
+            normalized_cmd = _normalize_git_cmd(args.bash_command)
             cmd_result = service.check_permission(
                 args.agent, args.role, "execute_command",
-                {"command": args.bash_command},
+                {"command": normalized_cmd},
             )
             symbol = "APPROVE" if cmd_result.permitted else "BLOCK"
             severity = f" [{cmd_result.severity}]" if not cmd_result.permitted else ""
@@ -103,8 +125,10 @@ def run(args):
         if analysis.writes:
             print(f"  Write paths:   {analysis.writes}")
             for write_path in analysis.writes:
+                # Normalize absolute paths to relative before checking scope.
+                rel_path = _make_path_relative(write_path, org_spec)
                 path_result = service.check_permission(
-                    args.agent, args.role, "write_file", {"path": write_path},
+                    args.agent, args.role, "write_file", {"path": rel_path},
                 )
                 symbol = "APPROVE" if path_result.permitted else "BLOCK"
                 print(f"    write_file({write_path}): {symbol}")

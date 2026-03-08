@@ -294,5 +294,13 @@ def run(args):
     print(f"  Commands:  /project:aorta-permissions, /project:aorta-status")
     if needs_post:
         print(f"  PostToolUse hooks enabled (achievement triggers detected)")
+
+    safe_cmds = spec.get("safe_commands", [])
+    if spec.get("bash_analysis") and safe_cmds:
+        print(f"\nBash analysis enabled. Commands that skip analysis (fast path):")
+        print(f"  {', '.join(safe_cmds)}")
+        print(f"  Add custom commands (jest, cargo test, etc.) to safe_commands in {org_spec_dest}")
+
     print(f"\nRun 'aorta validate {org_spec_dest}' to verify the spec.")
+    print(f"Run 'aorta watch' in a separate terminal to monitor governance events in real-time.")
 

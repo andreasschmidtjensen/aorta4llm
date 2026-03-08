@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 import pytest
 
-from integration.hooks import GovernanceHook, TOOL_ACTION_MAP
+from integration.hooks import GovernanceHook, TOOL_ACTION_MAP, _normalize_git_cmd
 
 
 def _make_scoped_hook(tmp_path, scope="src/"):
@@ -184,6 +184,178 @@ class TestBashCommandPassing:
             agent="dev",
         )
         assert result["decision"] == "approve"
+
+    def test_git_dash_c_normalized_for_pattern_matching(self, tmp_path):
+        """git -C <path> commit should still match 'git commit' pattern."""
+        spec_dict = {
+            "organization": "test_gate",
+            "roles": {
+                "agent": {
+                    "objectives": ["tests_passing"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "forbidden_command",
+                "command_pattern": "git commit",
+                "severity": "soft",
+            }],
+        }
+        spec_file = tmp_path / "gate.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+
+        # git -C /path commit should be blocked just like git commit
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {
+                "command": "git -C /private/tmp/test-project commit -m 'feat: x'",
+            }},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "SOFT BLOCK" in result["reason"]
+
+    def test_git_dash_c_compound_command_normalized(self, tmp_path):
+        """git -C in compound commands (add && commit) should be normalized."""
+        spec_dict = {
+            "organization": "test_gate",
+            "roles": {
+                "agent": {
+                    "objectives": ["tests_passing"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "forbidden_command",
+                "command_pattern": "git commit",
+                "severity": "soft",
+            }],
+        }
+        spec_file = tmp_path / "gate.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+
+        # Compound: git -C /path add ... && git -C /path commit ...
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {
+                "command": (
+                    "git -C /private/tmp/test-project add src/x.py && "
+                    "git -C /private/tmp/test-project commit -m 'feat: x'"
+                ),
+            }},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "SOFT BLOCK" in result["reason"]
+
+    def test_git_dash_c_normalized_for_required_before(self, tmp_path):
+        """git -C <path> commit should trigger required_before blocks."""
+        spec_dict = {
+            "organization": "test_gate",
+            "roles": {
+                "agent": {
+                    "objectives": ["tests_passing"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "required_before",
+                "blocks": "execute_command",
+                "command_pattern": "git commit",
+                "requires": "tests_passing",
+            }],
+        }
+        spec_file = tmp_path / "gate.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {
+                "command": "git -C /some/path commit -m 'test'",
+            }},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "tests_passing" in result["reason"]
+
+    def test_absolute_path_in_bash_write_normalized(self, tmp_path):
+        """Bash analysis write paths should be normalized to relative."""
+        aorta_dir = tmp_path / ".aorta"
+        aorta_dir.mkdir()
+        spec_dict = {
+            "organization": "test_bash",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "scope",
+                "paths": ["src/"],
+            }],
+            "bash_analysis": True,
+        }
+        spec_file = aorta_dir / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+
+        hook = GovernanceHook(spec_file, state_path=aorta_dir / "state.json")
+        hook.register_agent("dev", "agent", scope="src/")
+
+        # mkdir with absolute path that resolves to in-scope should be approved
+        abs_path = str(tmp_path / "src" / "models")
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {
+                "command": f"mkdir -p {abs_path}",
+            }},
+            agent="dev",
+        )
+        assert result["decision"] == "approve"
+
+    def test_absolute_path_in_bash_write_out_of_scope_blocked(self, tmp_path):
+        """Bash analysis should block absolute paths outside scope after normalization."""
+        aorta_dir = tmp_path / ".aorta"
+        aorta_dir.mkdir()
+        spec_dict = {
+            "organization": "test_bash",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "scope",
+                "paths": ["src/"],
+            }],
+            "bash_analysis": True,
+        }
+        spec_file = aorta_dir / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+
+        hook = GovernanceHook(spec_file, state_path=aorta_dir / "state.json")
+        hook.register_agent("dev", "agent", scope="src/")
+
+        # cp to /tmp should still be blocked (not relative to project)
+        result = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {
+                "command": "cp src/app.py /tmp/leak.py",
+            }},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "/tmp/leak.py" in result["reason"]
 
 
 class TestPostToolUseAchievements:
@@ -537,3 +709,39 @@ class TestActionableBlockMessages:
         assert result["decision"] == "block"
         assert "src/" in result["reason"]
         assert "tests/" in result["reason"]
+
+
+class TestNormalizeGitCmd:
+    """Tests for _normalize_git_cmd helper."""
+
+    def test_plain_git_commit_unchanged(self):
+        assert _normalize_git_cmd("git commit -m 'x'") == "git commit -m 'x'"
+
+    def test_strips_dash_c_path(self):
+        assert _normalize_git_cmd("git -C /some/path commit -m 'x'") == "git commit -m 'x'"
+
+    def test_strips_multiple_global_flags(self):
+        result = _normalize_git_cmd("git -C /path -c user.name=x commit -m 'y'")
+        assert result == "git commit -m 'y'"
+
+    def test_strips_no_pager(self):
+        assert _normalize_git_cmd("git --no-pager log") == "git log"
+
+    def test_non_git_command_unchanged(self):
+        assert _normalize_git_cmd("cp src/a.py /tmp/b.py") == "cp src/a.py /tmp/b.py"
+
+    def test_git_push_with_dash_c(self):
+        assert _normalize_git_cmd("git -C /tmp/proj push origin main") == "git push origin main"
+
+    def test_compound_command_both_normalized(self):
+        result = _normalize_git_cmd(
+            "git -C /path add src/x.py && git -C /path commit -m 'feat: x'"
+        )
+        assert "git add" in result
+        assert "git commit" in result
+        assert "-C" not in result
+
+    def test_compound_with_semicolon(self):
+        result = _normalize_git_cmd("git -C /p status; git -C /p commit -m 'x'")
+        assert "git status" in result
+        assert "git commit" in result

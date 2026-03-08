@@ -55,6 +55,35 @@ class TestSafeCommandDetection:
         """Redirects are always unsafe, even for allowlisted commands."""
         assert not _is_safe_command("pytest > out.txt", extra_safe=frozenset(["pytest"]))
 
+    def test_git_dash_c_safe_command(self):
+        """git -C /path status should still match 'git status' safe command."""
+        assert _is_safe_command(
+            "git -C /private/tmp/project status",
+            extra_safe=frozenset(["git status"]),
+        )
+
+    def test_git_dash_c_safe_command_with_args(self):
+        """git -C /path diff --cached should match 'git diff'."""
+        assert _is_safe_command(
+            "git -C /tmp/proj diff --cached",
+            extra_safe=frozenset(["git diff"]),
+        )
+
+
+class TestHeuristicGitNormalization:
+    """Tests for _SAFE_WRITE_PREFIXES with git -C."""
+
+    def test_git_dash_c_commit_is_safe_write(self):
+        """git -C /path commit should be recognized as a safe write prefix."""
+        result = _heuristic_analyze("git -C /tmp/proj commit -m 'test'")
+        assert result is not None
+        assert "known safe command" in result.summary
+
+    def test_git_dash_c_push_is_safe_write(self):
+        result = _heuristic_analyze("git -C /tmp/proj push origin main")
+        assert result is not None
+        assert "known safe command" in result.summary
+
 
 class TestAnalyzeBashCommand:
     """Tests with mocked claude CLI subprocess."""

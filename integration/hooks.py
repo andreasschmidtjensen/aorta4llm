@@ -71,6 +71,46 @@ _SAFE_AORTA_SUBCOMMANDS = frozenset({
 })
 
 
+def _normalize_git_cmd(cmd: str) -> str:
+    """Strip git global options (like -C <path>) for command pattern matching.
+
+    Claude Code often uses 'git -C /absolute/path commit ...' which bypasses
+    substring matching on 'git commit'. This normalizes to 'git commit ...'.
+
+    Handles compound commands: 'git -C /path add && git -C /path commit'
+    becomes 'git add && git commit'.
+    """
+    if "git " not in cmd:
+        return cmd
+    # Use \b word boundary to match 'git' anywhere in compound commands
+    # (after &&, ||, ;, or at start). Strips all global flags in one pass.
+    normalized = re.sub(
+        r"\bgit"
+        r"(\s+(?:-[Cc]\s+\S+|--(?:git-dir|work-tree|namespace)(?:=|\s+)\S+"
+        r"|--no-pager|--bare|--no-replace-objects|--literal-pathspecs"
+        r"|--no-optional-locks))+",
+        "git",
+        cmd,
+    )
+    return normalized
+
+
+def _make_relative(path: str, org_spec_path: Path,
+                   project_cwd: str | None = None,
+                   context_cwd: str = "") -> str:
+    """Normalize an absolute path to be relative to the project root."""
+    if not path or not os.path.isabs(path):
+        return path
+    detected_root = _detect_project_root(org_spec_path)
+    for candidate in [project_cwd, context_cwd, detected_root, os.getcwd()]:
+        if not candidate:
+            continue
+        prefix = str(candidate).rstrip("/") + "/"
+        if path.startswith(prefix):
+            return path[len(prefix):]
+    return path
+
+
 def _is_governance_command(cmd: str) -> bool:
     """Check if a bash command invokes a mutating aorta governance tool.
 
@@ -317,21 +357,18 @@ class GovernanceHook:
             return {"decision": "block", "reason": reason}
 
         params = {}
+        raw_command = ""
         if tool_name == "Bash":
-            params["command"] = tool_input.get("command", "")
+            raw_command = tool_input.get("command", "")
+            # Normalize git commands for pattern matching (strips -C <path> etc.)
+            params["command"] = _normalize_git_cmd(raw_command)
         else:
             raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
-            if raw_path and os.path.isabs(raw_path):
-                # Claude Code sends absolute paths; make relative to project root.
-                # Try explicit cwd, context cwd, auto-detected root, then process cwd.
-                detected_root = _detect_project_root(self._org_spec_path)
-                for candidate in [project_cwd, context.get("cwd", ""), detected_root, os.getcwd()]:
-                    if not candidate:
-                        continue
-                    prefix = str(candidate).rstrip("/") + "/"
-                    if raw_path.startswith(prefix):
-                        raw_path = raw_path[len(prefix):]
-                        break
+            raw_path = _make_relative(
+                raw_path, self._org_spec_path,
+                project_cwd=project_cwd,
+                context_cwd=context.get("cwd", ""),
+            )
             if raw_path:
                 params["path"] = raw_path
 
@@ -401,11 +438,18 @@ class GovernanceHook:
         })
 
         # Phase 2: LLM-based Bash command analysis.
-        if tool_name == "Bash" and self._bash_analysis and params.get("command"):
+        # Use raw_command (not normalized) so path extraction sees actual paths.
+        if tool_name == "Bash" and self._bash_analysis and raw_command:
             from governance.bash_analyzer import analyze_bash_command
 
-            analysis = analyze_bash_command(params["command"], extra_safe=self._safe_commands)
+            analysis = analyze_bash_command(raw_command, extra_safe=self._safe_commands)
             for write_path in analysis.writes:
+                # Normalize absolute paths to relative before scope checking.
+                write_path = _make_relative(
+                    write_path, self._org_spec_path,
+                    project_cwd=project_cwd,
+                    context_cwd=context.get("cwd", ""),
+                )
                 path_result = self._service.check_permission(
                     agent_id, role, "write_file", {"path": write_path},
                 )
@@ -458,15 +502,7 @@ class GovernanceHook:
         # Sensitive content warning for reads of restricted paths.
         if tool_name in ("Read", "Glob", "Grep") and self._sensitive_paths:
             raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
-            if raw_path and os.path.isabs(raw_path):
-                detected_root = _detect_project_root(self._org_spec_path)
-                for candidate in [detected_root, os.getcwd()]:
-                    if not candidate:
-                        continue
-                    prefix = str(candidate).rstrip("/") + "/"
-                    if raw_path.startswith(prefix):
-                        raw_path = raw_path[len(prefix):]
-                        break
+            raw_path = _make_relative(raw_path, self._org_spec_path)
             if raw_path and self._matches_sensitive_path(raw_path):
                 return {
                     "_sensitive_warning": (
@@ -498,6 +534,8 @@ class GovernanceHook:
             pattern = trigger.get("command_pattern", "")
             if pattern:
                 cmd = tool_input.get("command", "")
+                # Normalize git flags so 'git -C /path ...' matches patterns.
+                cmd = _normalize_git_cmd(cmd)
                 if not re.search(pattern, cmd):
                     continue
             achieved.append(trigger["marks"])
