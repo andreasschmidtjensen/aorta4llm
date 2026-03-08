@@ -100,12 +100,16 @@ class TestRunInit:
         data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
         assert "PostToolUse" in data["hooks"]
 
-        # Second init with safe-agent (no PostToolUse) — needs --reinit
+        # Second init with safe-agent — has PostToolUse for sensitive content
+        # warnings (Read/Glob/Grep) but NOT for Bash (no achievement triggers).
         args = self._make_args(template="safe-agent")
         args.reinit = True
         run(args)
         data = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
-        assert "PostToolUse" not in data["hooks"]  # stale entry removed
+        assert "PostToolUse" in data["hooks"]
+        post_matcher = data["hooks"]["PostToolUse"][0]["matcher"]
+        assert "Bash" not in post_matcher  # test-gate's Bash trigger removed
+        assert "Read" in post_matcher  # sensitive content warning active
 
     def test_init_multi_scope(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

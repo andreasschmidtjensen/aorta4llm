@@ -126,6 +126,16 @@ aorta protect .ssh/           # shorthand for no-access
 aorta readonly config/        # shorthand for read-only
 ```
 
+## Sensitive content warnings
+
+When the agent reads a file marked `read-only` or `no-access` (via allow-once), a PostToolUse hook injects a governance notice into the conversation:
+
+> **[GOVERNANCE NOTICE]** 'config/settings.yaml' is marked as sensitive (read-only or no-access). Do NOT copy, embed, or hardcode specific values from this file in any code you write. Use environment variable lookups or placeholder values instead.
+
+This is a prompt-level signal, not enforcement — aorta controls *where* the agent writes, not *what* it writes. But the contextual warning at the exact moment of reading significantly reduces the chance of accidental credential leakage into source code.
+
+The warning fires automatically for any path in the `access` map with `read-only` or `no-access` level. No additional configuration needed.
+
 ## Norm types
 
 For command-level governance and advanced rules, use explicit norms:
@@ -160,13 +170,11 @@ Checks for missing fields, undefined roles, invalid norm types, and broken refer
 
 ```bash
 # Test a file write
-aorta dry-run --org-spec .aorta/safe-agent.yaml \
-  --tool Write --path config/secret.py \
+aorta dry-run --tool Write --path config/secret.py \
   --agent agent --role agent --scope src/
 
 # Test a bash command
-aorta dry-run --org-spec .aorta/safe-agent.yaml \
-  --bash-command "cp src/a.py /tmp/leak.py" \
+aorta dry-run --bash-command "cp src/a.py /tmp/leak.py" \
   --agent agent --role agent --scope src/
 ```
 
@@ -197,15 +205,17 @@ These run read-only `aorta` commands. The agent can also run `aorta status`, `ao
 ## Check governance state
 
 ```bash
-aorta status --org-spec .aorta/safe-agent.yaml
+aorta status
 ```
 
 Shows registered agents, active norms, achievements, and recent activity (approved/blocked counts, last blocked actions). Add `--json` for machine-readable output.
 
+All commands auto-detect the org spec from `.aorta/`. Use `--org-spec` to override when you have multiple specs.
+
 ## Check effective permissions
 
 ```bash
-aorta permissions --org-spec .aorta/safe-agent.yaml
+aorta permissions
 ```
 
 Shows the access map with actual read/write status, command restrictions, achievements, and self-protection rules.
@@ -213,7 +223,7 @@ Shows the access map with actual read/write status, command restrictions, achiev
 ## Reset state
 
 ```bash
-aorta reset --org-spec .aorta/safe-agent.yaml
+aorta reset
 ```
 
 Clears registered agents, achievements, and events. Use `--keep-events` to preserve the event log. Agents must be re-registered afterward.
@@ -223,7 +233,7 @@ Clears registered agents, achievements, and events. Use `--keep-events` to prese
 Monitor governance events in real-time from a separate terminal:
 
 ```bash
-aorta watch --org-spec .aorta/safe-agent.yaml
+aorta watch
 ```
 
 Shows blocks, approvals, registrations, and achievements as they happen. Useful during a Claude Code session.
@@ -243,7 +253,7 @@ Non-aorta hooks (e.g., your own linters) are always preserved — only aorta hoo
 When a hook blocks an action, the block message includes an `allow-once` command hint. To grant a one-time exception:
 
 ```bash
-aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env
+aorta allow-once .env
 ```
 
 The next access to `.env` will be approved; subsequent accesses are blocked again. Use `--agent <name>` to restrict the exception to a specific agent in multi-agent setups.
@@ -253,8 +263,7 @@ The next access to `.env` will be approved; subsequent accesses are blocked agai
 To understand why an action is allowed or blocked:
 
 ```bash
-aorta explain --org-spec .aorta/safe-agent.yaml \
-  --tool Write --path config/db.yml --agent agent --role agent --scope "src/"
+aorta explain --tool Write --path config/db.yml --agent agent --role agent --scope "src/"
 ```
 
 Shows each norm, whether it applies, and why it matches or doesn't.
@@ -275,7 +284,7 @@ Common causes:
 
 ## Limitations
 
-- **No content governance**: aorta blocks *writing to* `.env` but cannot prevent the agent from *reading* a file and pasting its contents elsewhere. Use `protected` norms to block reads of truly sensitive files.
+- **No content governance**: aorta blocks *writing to* `.env` but cannot prevent the agent from *reading* a file and pasting its contents elsewhere. Use `no-access` to block reads of truly sensitive files. For files the agent needs to read but shouldn't leak (e.g. `config/`), the sensitive content warning provides a prompt-level nudge but not hard enforcement.
 - **Bash escape hatch**: an agent can construct commands that evade heuristic detection (e.g., `python -c "open('x','w')..."`). LLM analysis catches most of these but isn't bulletproof.
 - **No filesystem monitoring**: governance only sees tool calls, not side effects.
 - **LLM analysis latency**: ~5s per ambiguous bash command. The heuristic pre-filter handles ~80% of patterns instantly.

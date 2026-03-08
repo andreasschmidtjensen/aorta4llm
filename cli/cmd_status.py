@@ -8,7 +8,7 @@ from integration.events import read_events
 
 def add_parser(subparsers):
     p = subparsers.add_parser("status", help="Show governance state for an org spec")
-    p.add_argument("--org-spec", required=True, help="Path to org spec YAML")
+    p.add_argument("--org-spec", default=None, help="Path to org spec YAML (auto-detected from .aorta/)")
     p.add_argument("--events-path", default=None, help="Events JSONL path")
     p.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
     p.set_defaults(func=run)
@@ -22,17 +22,15 @@ def _find_state_path(org_spec_path: str) -> Path:
 
 def run(args):
     import yaml
+    from cli.spec_utils import find_org_spec
 
-    org_spec_path = Path(args.org_spec)
-    if not org_spec_path.exists():
-        print(f"Org spec not found: {org_spec_path}")
-        raise SystemExit(1)
+    org_spec_path = find_org_spec(args.org_spec)
 
     with open(org_spec_path) as f:
         spec = yaml.safe_load(f)
 
     # Find state and events
-    state_path = _find_state_path(args.org_spec)
+    state_path = _find_state_path(str(org_spec_path))
     events_path = Path(args.events_path) if args.events_path else Path(".aorta/events.jsonl")
 
     # Load state

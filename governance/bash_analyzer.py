@@ -77,13 +77,15 @@ def _is_safe_command(command: str, extra_safe: frozenset[str] | None = None) -> 
 
 
 # Regex patterns for heuristic write-path extraction.
-_REDIRECT_RE = re.compile(r">{1,2}\s*(\S+)")
-_TEE_RE = re.compile(r"\btee\s+(?:-a\s+)?(\S+)")
-_CP_RE = re.compile(r"\bcp\s+(?:-\w+\s+)*\S+\s+(\S+)")
-_MV_RE = re.compile(r"\bmv\s+(?:-\w+\s+)*\S+\s+(\S+)")
+# Path capture uses [^\s;|&)]+ to exclude shell metacharacters.
+_PATH = r"[^\s;|&)]+"
+_REDIRECT_RE = re.compile(r">{1,2}\s*(" + _PATH + r")")
+_TEE_RE = re.compile(r"\btee\s+(?:-a\s+)?(" + _PATH + r")")
+_CP_RE = re.compile(r"\bcp\s+(?:-\w+\s+)*\S+\s+(" + _PATH + r")")
+_MV_RE = re.compile(r"\bmv\s+(?:-\w+\s+)*\S+\s+(" + _PATH + r")")
 _RM_RE = re.compile(r"\brm\s+(?:-\w+\s+)*(.+)")
-_MKDIR_RE = re.compile(r"\bmkdir\s+(?:-\w+\s+)*(\S+)")
-_TOUCH_RE = re.compile(r"\btouch\s+(\S+)")
+_MKDIR_RE = re.compile(r"\bmkdir\s+(?:-\w+\s+)*(" + _PATH + r")")
+_TOUCH_RE = re.compile(r"\btouch\s+(" + _PATH + r")")
 
 # Commands that look like writes but don't create user-visible file changes.
 _SAFE_WRITE_PREFIXES = [
@@ -139,6 +141,7 @@ def _heuristic_analyze(command: str) -> BashAnalysis | None:
             return None  # Can't parse — ambiguous.
 
     # Filter out /dev/null — not a real file write.
+    raw_count = len(writes)
     writes = [w for w in writes if w != "/dev/null"]
 
     if writes:
@@ -147,6 +150,10 @@ def _heuristic_analyze(command: str) -> BashAnalysis | None:
             is_destructive=is_destructive,
             summary=f"heuristic: {len(writes)} write path(s) detected",
         )
+
+    # If we found redirects but they were all /dev/null, that's read-only.
+    if raw_count > 0:
+        return BashAnalysis(summary="heuristic: no write patterns detected (only /dev/null)")
 
     # No writes detected and no complex syntax — probably read-only.
     if len(segments) <= 2 and not re.search(r"[>;]", stripped):

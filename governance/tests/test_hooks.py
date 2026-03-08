@@ -410,7 +410,7 @@ class TestGovernanceCommandBlocking:
 
     def test_aorta_allow_once_blocked(self, hook):
         result = hook.pre_tool_use(
-            {"tool_name": "Bash", "tool_input": {"command": "aorta allow-once --org-spec .aorta/spec.yaml --path .env"}},
+            {"tool_name": "Bash", "tool_input": {"command": "aorta allow-once .env"}},
             agent="dev",
         )
         assert result["decision"] == "block"

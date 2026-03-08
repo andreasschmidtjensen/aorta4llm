@@ -233,3 +233,32 @@ class TestHeuristicAnalysis:
             result = analyze_bash_command("cp src/a.py config/a.py")
             mock_run.assert_not_called()
         assert "config/a.py" in result.writes
+
+    def test_redirect_to_dev_null_with_semicolon(self):
+        """/dev/null; should not be treated as a write path."""
+        r = _heuristic_analyze("ls 2>/dev/null; ls foo 2>/dev/null")
+        assert r is not None
+        assert r.writes == []
+
+    def test_redirect_with_semicolon_separator(self):
+        """Redirect path should not include trailing semicolons."""
+        r = _heuristic_analyze("echo x > out.txt; echo y")
+        assert r is not None
+        assert "out.txt" in r.writes
+        assert "out.txt;" not in r.writes
+
+    def test_redirect_with_ampersand_separator(self):
+        r = _heuristic_analyze("echo x > out.txt && echo done")
+        assert r is not None
+        assert "out.txt" in r.writes
+
+    def test_redirect_with_pipe_separator(self):
+        r = _heuristic_analyze("echo x > out.txt | cat")
+        assert r is not None
+        assert "out.txt" in r.writes
+
+    def test_cp_with_semicolon(self):
+        r = _heuristic_analyze("cp a.py b.py; echo done")
+        assert r is not None
+        assert "b.py" in r.writes
+        assert "b.py;" not in r.writes

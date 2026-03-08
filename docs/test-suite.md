@@ -89,7 +89,7 @@ Then open Claude Code: `cd /tmp/test-project && claude`
 
 ### P8: Allow-once flow
 
-Run in shell first: `aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env`
+Run in shell first: `aorta allow-once .env`
 
 Then prompt:
 
@@ -234,7 +234,7 @@ Then prompt:
 Run in shell:
 
 ```bash
-aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env
+aorta allow-once .env
 aorta init --template safe-agent --scope src/ tests/ --reinit
 ```
 

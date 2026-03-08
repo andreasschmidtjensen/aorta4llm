@@ -12,7 +12,7 @@ def add_parser(subparsers):
         "permissions",
         help="Show effective permissions for an agent",
     )
-    p.add_argument("--org-spec", required=True, help="Path to org spec YAML")
+    p.add_argument("--org-spec", default=None, help="Path to org spec YAML (auto-detected from .aorta/)")
     p.add_argument("--agent", default="agent", help="Agent name (default: agent)")
     p.set_defaults(func=run)
 
@@ -24,15 +24,14 @@ def _check(hook, agent, tool, path):
         ctx["tool_input"]["command"] = path
     else:
         ctx["tool_input"]["file_path"] = path
-    result = hook.pre_tool_use(ctx, agent=agent)
+    result = hook.pre_tool_use(ctx, agent=agent, quiet=True)
     return result["decision"]
 
 
 def run(args):
-    org_spec_path = Path(args.org_spec)
-    if not org_spec_path.exists():
-        print(f"Org spec not found: {org_spec_path}")
-        raise SystemExit(1)
+    from cli.spec_utils import find_org_spec
+
+    org_spec_path = find_org_spec(args.org_spec)
 
     with open(org_spec_path) as f:
         spec = yaml.safe_load(f)

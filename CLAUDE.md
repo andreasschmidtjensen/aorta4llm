@@ -50,9 +50,9 @@ aorta init --template safe-agent --scope src/
 
 This creates `.aorta/safe-agent.yaml` and `.claude/settings.local.json` with hooks configured. Re-run with `--reinit` to update existing hooks. The agent is registered as `agent` automatically.
 
-Grant temporary exceptions: `aorta allow-once --org-spec .aorta/safe-agent.yaml --path .env`
+Grant temporary exceptions: `aorta allow-once .env`
 
-Debug norm evaluation: `aorta explain --org-spec .aorta/safe-agent.yaml --tool Write --path config/x.py --agent agent --role agent`
+Debug norm evaluation: `aorta explain --tool Write --path config/x.py --agent agent --role agent`
 
 ## Reference
 

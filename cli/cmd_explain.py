@@ -8,7 +8,7 @@ from integration.hooks import TOOL_ACTION_MAP
 
 def add_parser(subparsers):
     p = subparsers.add_parser("explain", help="Explain why an action is allowed or blocked")
-    p.add_argument("--org-spec", required=True, help="Path to org spec YAML")
+    p.add_argument("--org-spec", default=None, help="Path to org spec YAML (auto-detected from .aorta/)")
     p.add_argument("--tool", help="Tool name (Write, Edit, Bash, Read)")
     p.add_argument("--path", help="File path for Write/Edit/Read")
     p.add_argument("--bash-command", help="Bash command to check")
@@ -19,10 +19,13 @@ def add_parser(subparsers):
 
 
 def run(args):
-    with open(args.org_spec) as f:
+    from cli.spec_utils import find_org_spec
+
+    org_spec = find_org_spec(args.org_spec)
+    with open(org_spec) as f:
         spec = yaml.safe_load(f)
 
-    service = GovernanceService(args.org_spec)
+    service = GovernanceService(str(org_spec))
     service.register_agent(args.agent, args.role, args.scope)
 
     # Determine action and params.
@@ -46,7 +49,7 @@ def run(args):
         params["command"] = args.bash_command
 
     print(f"=== Governance Explanation ===")
-    print(f"Org spec: {args.org_spec}")
+    print(f"Org spec: {org_spec}")
     print(f"Agent:    {args.agent} (role: {args.role}, scope: {args.scope or 'unrestricted'})")
     print(f"Action:   {action}({params.get('path', params.get('command', ''))})")
     print()

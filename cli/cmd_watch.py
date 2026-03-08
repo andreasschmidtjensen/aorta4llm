@@ -7,7 +7,7 @@ from pathlib import Path
 
 def add_parser(subparsers):
     p = subparsers.add_parser("watch", help="Live tail of governance events")
-    p.add_argument("--org-spec", required=True, help="Path to org spec YAML")
+    p.add_argument("--org-spec", default=None, help="Path to org spec YAML (auto-detected from .aorta/)")
     p.add_argument("--events-path", default=None, help="Events JSONL path (default: .aorta/events.jsonl)")
     p.add_argument("--since", type=int, default=0, help="Show events from last N seconds (0 = all)")
     p.set_defaults(func=run)
@@ -64,7 +64,10 @@ def _format_event(event: dict) -> str | None:
                 short_reason = short_reason[:77] + "..."
             line += f" — {short_reason}"
         if decision == "approve" and reason:
-            line += f" — {reason}"
+            short_reason = reason.split("\n")[0]
+            if len(short_reason) > 80:
+                short_reason = short_reason[:77] + "..."
+            line += f" — {short_reason}"
         return line
 
     if etype == "achieved":
@@ -77,6 +80,12 @@ def _format_event(event: dict) -> str | None:
         mark = event.get("mark", "?")
         return f"{ts} \033[33m↺\033[0m {agent} reset {mark}"
 
+    if etype == "allow_once":
+        path = event.get("path", "?")
+        agent = event.get("agent", "*")
+        agent_str = f" (agent: {agent})" if agent != "*" else ""
+        return f"{ts} \033[33m⚑\033[0m allow-once {path}{agent_str}"
+
     if etype == "bash_analysis":
         decision = event.get("decision", "?")
         symbol = _SYMBOLS.get(decision, "?")
@@ -88,8 +97,11 @@ def _format_event(event: dict) -> str | None:
 
 
 def run(args):
+    from cli.spec_utils import find_org_spec
+
+    org_spec_path = find_org_spec(args.org_spec)
     events_path = Path(args.events_path) if args.events_path else (
-        Path(args.org_spec).parent / "events.jsonl"
+        org_spec_path.parent / "events.jsonl"
     )
 
     if not events_path.exists():

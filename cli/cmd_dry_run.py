@@ -3,7 +3,7 @@
 
 def add_parser(subparsers):
     p = subparsers.add_parser("dry-run", help="Test governance checks without blocking")
-    p.add_argument("--org-spec", required=True, help="Path to org spec YAML")
+    p.add_argument("--org-spec", default=None, help="Path to org spec YAML (auto-detected from .aorta/)")
     p.add_argument("--tool", help="Tool name (Write, Edit, Bash, Read)")
     p.add_argument("--path", help="File path for Write/Edit/Read")
     p.add_argument("--bash-command", help="Bash command to analyze")
@@ -32,10 +32,12 @@ def _check_governance_command(command: str) -> str | None:
 
 
 def run(args):
+    from cli.spec_utils import find_org_spec
     from governance.service import GovernanceService
     from integration.hooks import TOOL_ACTION_MAP
 
-    service = GovernanceService(args.org_spec)
+    org_spec = str(find_org_spec(args.org_spec))
+    service = GovernanceService(org_spec)
     service.register_agent(args.agent, args.role, args.scope)
 
     print(f"Agent: {args.agent} (role: {args.role}, scope: {args.scope or 'unrestricted'})")

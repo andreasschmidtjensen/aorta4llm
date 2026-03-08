@@ -50,6 +50,10 @@ def run(args):
     elif args.hook_command == "post-tool-use":
         context = json.loads(sys.stdin.read())
         result = hook.post_tool_use(context, agent=agent)
+        warning = result.pop("_sensitive_warning", None)
+        if warning:
+            print(warning, file=sys.stderr, flush=True)
+            sys.exit(2)
         print(json.dumps(result), flush=True)
 
     elif args.hook_command == "prompt":

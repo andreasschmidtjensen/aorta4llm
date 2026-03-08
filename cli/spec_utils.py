@@ -60,15 +60,22 @@ def rebuild_hooks(spec: dict, spec_path: Path) -> None:
     if has_protected:
         write_matcher = "Write|Edit|NotebookEdit|Bash|Read|Glob|Grep"
 
+    has_sensitive = any(v in ("read-only", "no-access") for v in spec.get("access", {}).values())
+
     hooks_config: dict = {
         "PreToolUse": [{
             "matcher": write_matcher,
             "hooks": [{"type": "command", "command": pre_cmd}],
         }],
     }
+    post_matchers = []
     if needs_post:
+        post_matchers.append("Bash")
+    if has_sensitive:
+        post_matchers.extend(["Read", "Glob", "Grep"])
+    if post_matchers:
         hooks_config["PostToolUse"] = [{
-            "matcher": "Bash",
+            "matcher": "|".join(sorted(set(post_matchers))),
             "hooks": [{"type": "command", "command": post_cmd}],
         }]
 

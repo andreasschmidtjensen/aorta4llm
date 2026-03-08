@@ -176,15 +176,23 @@ def run(args):
     if args.strict or has_protected or has_no_access:
         write_matcher = "Write|Edit|NotebookEdit|Bash|Read|Glob|Grep"
 
+    # Sensitive paths: read-only or no-access entries need PostToolUse for content warnings.
+    has_sensitive = any(v in ("read-only", "no-access") for v in spec.get("access", {}).values())
+
     hooks_config: dict = {
         "PreToolUse": [{
             "matcher": write_matcher,
             "hooks": [{"type": "command", "command": pre_cmd}],
         }],
     }
+    post_matchers = []
     if needs_post:
+        post_matchers.append("Bash")
+    if has_sensitive:
+        post_matchers.extend(["Read", "Glob", "Grep"])
+    if post_matchers:
         hooks_config["PostToolUse"] = [{
-            "matcher": "Bash",
+            "matcher": "|".join(sorted(set(post_matchers))),
             "hooks": [{"type": "command", "command": post_cmd}],
         }]
 

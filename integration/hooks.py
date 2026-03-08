@@ -197,27 +197,34 @@ class GovernanceHook:
         self._soft_block_cache: dict[str, float] = {}  # command_hash -> timestamp
         self._exceptions: list[dict] = []
         self._soft_block_window = extras[3]
+        self._sensitive_paths = extras[4]
         self._reset_on_file_change: set[str] = {
             t["marks"] for t in self._triggers if t.get("reset_on_file_change")
         }
         self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
 
-    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int]:
-        """Load achievement_triggers, bash_analysis flag, safe_commands, and soft_block_window."""
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str]]:
+        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, and sensitive paths."""
         try:
             with open(org_spec_path) as f:
                 spec = yaml.safe_load(f)
             safe_cmds = frozenset(spec.get("safe_commands", []))
             window = int(spec.get("soft_block_window", 60))
+            # Paths marked read-only or no-access are sensitive.
+            sensitive = frozenset(
+                path for path, level in spec.get("access", {}).items()
+                if level in ("read-only", "no-access")
+            )
             return (
                 spec.get("achievement_triggers", []),
                 bool(spec.get("bash_analysis", False)),
                 safe_cmds,
                 window,
+                sensitive,
             )
         except Exception:
-            return [], False, frozenset(), 60
+            return [], False, frozenset(), 60, frozenset()
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state."""
@@ -276,7 +283,8 @@ class GovernanceHook:
             self._log(event)
 
     def pre_tool_use(self, context: dict, agent: str | None = None,
-                     project_cwd: str | None = None) -> dict:
+                     project_cwd: str | None = None,
+                     quiet: bool = False) -> dict:
         """Handle PreToolUse hook.
 
         Args:
@@ -284,10 +292,12 @@ class GovernanceHook:
                      {"tool_name": "Write", "tool_input": {"file_path": "..."}}
             agent: Agent ID (override context if provided)
             project_cwd: Explicit project root for path normalization.
+            quiet: Suppress event logging (for introspection commands).
 
         Returns:
             {"decision": "approve"} or {"decision": "block", "reason": "..."}
         """
+        log = self._log if not quiet else lambda _: None
         tool_name = context.get("tool_name", "")
         tool_input = context.get("tool_input", {})
 
@@ -299,7 +309,7 @@ class GovernanceHook:
         role = self._get_agent_role(agent_id)
         if not role:
             reason = f"agent '{agent_id}' is not registered — action denied (fail-closed)"
-            self._log({
+            log({
                 "type": "check", "agent": agent_id, "role": "unknown",
                 "action": action, "path": "",
                 "decision": "block", "reason": reason,
@@ -330,7 +340,7 @@ class GovernanceHook:
             for protected in PROTECTED_PATHS:
                 if params["path"].startswith(protected) or params["path"] == protected.rstrip("/"):
                     reason = f"write to '{params['path']}' denied: governance infrastructure is protected"
-                    self._log({
+                    log({
                         "type": "check", "agent": agent_id, "role": role,
                         "action": action, "path": params["path"],
                         "decision": "block", "reason": reason, "severity": "hard",
@@ -342,7 +352,7 @@ class GovernanceHook:
             cmd = params["command"]
             if _is_governance_command(cmd):
                 reason = "agents cannot run governance commands"
-                self._log({
+                log({
                     "type": "check", "agent": agent_id, "role": role,
                     "action": action, "path": "",
                     "decision": "block", "reason": reason, "severity": "hard",
@@ -352,7 +362,7 @@ class GovernanceHook:
         # Check for allow-once exceptions before norm evaluation.
         path = params.get("path", "")
         if path and self._check_exception(path, agent_id):
-            self._log({
+            log({
                 "type": "check", "agent": agent_id, "role": role,
                 "action": action, "path": path,
                 "decision": "approve", "reason": "allow-once exception",
@@ -364,28 +374,27 @@ class GovernanceHook:
         if not result.permitted:
             if result.severity == "soft":
                 soft_result = self._handle_soft_block(result.reason, params)
-                self._log({
+                log({
                     "type": "check", "agent": agent_id, "role": role,
                     "action": action, "path": params.get("path", ""),
                     "decision": soft_result["decision"],
-                    "reason": result.reason, "severity": "soft",
+                    "reason": _truncate_reason(result.reason), "severity": "soft",
                 })
                 return soft_result
             short_reason = _shorten_block_reason(result.reason)
             display = _display_action(action, path)
             user_reason = f"{display} blocked: {short_reason}"
-            self._log({
+            log({
                 "type": "check", "agent": agent_id, "role": role,
                 "action": action, "path": params.get("path", ""),
                 "decision": "block", "reason": _truncate_reason(result.reason),
                 "severity": "hard",
             })
             if path:
-                spec_rel = str(self._org_spec_path)
-                user_reason += f"\n  To grant a one-time exception: aorta allow-once --org-spec {spec_rel} --path {path}"
+                user_reason += f"\n  To grant a one-time exception: aorta allow-once {path}"
             return {"decision": "block", "reason": user_reason}
 
-        self._log({
+        log({
             "type": "check", "agent": agent_id, "role": role,
             "action": action, "path": params.get("path", ""),
             "decision": "approve",
@@ -401,7 +410,7 @@ class GovernanceHook:
                     agent_id, role, "write_file", {"path": write_path},
                 )
                 if not path_result.permitted:
-                    self._log(
+                    log(
                         {"type": "bash_analysis", "agent": agent_id,
                          "command": params["command"], "writes": analysis.writes,
                          "decision": "block", "reason": path_result.reason},
@@ -412,7 +421,7 @@ class GovernanceHook:
                         "reason": f"Bash command writes to '{write_path}': {short}",
                     }
             if analysis.writes:
-                self._log(
+                log(
                     {"type": "bash_analysis", "agent": agent_id,
                      "command": params["command"], "writes": analysis.writes,
                      "decision": "approve"},
@@ -428,8 +437,8 @@ class GovernanceHook:
                         if not (e.get("type") == "achieved" and mark in e.get("objectives", []))
                     ]
                     self._save_state()
-                    self._log({"type": "achievement_reset", "agent": agent_id,
-                               "mark": mark, "reason": "file changed"})
+                    log({"type": "achievement_reset", "agent": agent_id,
+                         "mark": mark, "reason": "file changed"})
 
         return {"decision": "approve"}
 
@@ -439,12 +448,38 @@ class GovernanceHook:
         Checks achievement_triggers from the org spec. When a trigger matches
         the tool name, command pattern, and exit code, marks the corresponding
         achievement and notifies the governance engine.
+
+        Also emits a sensitive content warning when a read-only or no-access
+        file was successfully read (via allow-once or read-only access).
         """
+        tool_name = context.get("tool_name", "")
+        tool_input = context.get("tool_input", {})
+
+        # Sensitive content warning for reads of restricted paths.
+        if tool_name in ("Read", "Glob", "Grep") and self._sensitive_paths:
+            raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+            if raw_path and os.path.isabs(raw_path):
+                detected_root = _detect_project_root(self._org_spec_path)
+                for candidate in [detected_root, os.getcwd()]:
+                    if not candidate:
+                        continue
+                    prefix = str(candidate).rstrip("/") + "/"
+                    if raw_path.startswith(prefix):
+                        raw_path = raw_path[len(prefix):]
+                        break
+            if raw_path and self._matches_sensitive_path(raw_path):
+                return {
+                    "_sensitive_warning": (
+                        f"[GOVERNANCE NOTICE] '{raw_path}' is marked as sensitive "
+                        f"(read-only or no-access). Do NOT copy, embed, or hardcode "
+                        f"specific values from this file in any code you write. Use "
+                        f"environment variable lookups or placeholder values instead."
+                    ),
+                }
+
         if not self._triggers:
             return {"status": "ok"}
 
-        tool_name = context.get("tool_name", "")
-        tool_input = context.get("tool_input", {})
         tool_response = context.get("tool_response", {})
         exit_code = tool_response.get("exit_code", 0)
 
@@ -480,6 +515,19 @@ class GovernanceHook:
                 )
 
         return {"status": "ok"}
+
+    def _matches_sensitive_path(self, path: str) -> bool:
+        """Check if a path matches any sensitive (read-only/no-access) access map entry."""
+        import fnmatch
+        for pattern in self._sensitive_paths:
+            if any(c in pattern for c in "*?["):
+                if fnmatch.fnmatch(path, pattern):
+                    return True
+            else:
+                prefix = pattern.rstrip("/")
+                if path == prefix or path.startswith(prefix):
+                    return True
+        return False
 
     def get_system_prompt_injection(self, agent: str) -> str | None:
         """Generate system prompt text from active obligations and options.
@@ -622,6 +670,10 @@ def main():
     elif args.command == "post-tool-use":
         context = json.loads(sys.stdin.read())
         result = hook.post_tool_use(context, agent=args.agent)
+        warning = result.pop("_sensitive_warning", None)
+        if warning:
+            print(warning, file=sys.stderr, flush=True)
+            sys.exit(2)
         _respond(result)
 
     elif args.command == "prompt":
