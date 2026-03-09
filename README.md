@@ -54,7 +54,7 @@ The pure-Python engine requires no external dependencies beyond PyYAML.
 ### 1. Install
 
 ```bash
-uv pip install -e "/path/to/aorta4llm"
+uv tool install git+https://github.com/andreasschmidtjensen/aorta4llm.git
 ```
 
 ### 2. Initialize governance

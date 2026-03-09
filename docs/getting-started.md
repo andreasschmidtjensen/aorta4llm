@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-uv pip install -e "/path/to/aorta4llm"
+uv tool install git+https://github.com/andreasschmidtjensen/aorta4llm.git
 ```
 
 ## One-command setup

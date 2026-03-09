@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AORTA for Large Language Models - Deterministic Governance for Claude Code</title>
+  <style>
+    :root {
+     --bg: #0d1117;
+     --surface: #161b22;
+     --border: #30363d;
+     --text: #e6edf3;
+     --text-muted: #8b949e;
+     --accent: #58a6ff;
+     --green: #3fb950;
+     --red: #f85149;
+     --yellow: #d29922;
+     --purple: #bc8cff;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Hero */
+    .hero {
+      padding: 80px 0 60px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: 2.4em;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.02em;
+    }
+    .hero h1 span { color: var(--accent); }
+    .hero .tagline {
+      font-size: 1.2em;
+      color: var(--text-muted);
+      max-width: 640px;
+      margin: 0 auto 32px;
+    }
+    .hero .hook {
+      font-size: 1.05em;
+      color: var(--text);
+      max-width: 680px;
+      margin: 0 auto 40px;
+      line-height: 1.7;
+    }
+    .hero .hook strong { color: var(--accent); }
+
+    .cta-row {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .cta {
+      display: inline-block;
+      padding: 12px 28px;
+      border-radius: 6px;
+      font-size: 1em;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    .cta:hover { opacity: 0.85; }
+    .cta-primary {
+      background: var(--accent);
+      color: var(--bg);
+    }
+    .cta-secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border);
+    }
+
+    /* Sections */
+    section {
+      padding: 60px 0;
+    }
+    section h2 {
+      font-size: 1.6em;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: -0.01em;
+    }
+    section h2 span { color: var(--accent); }
+    section .section-sub {
+      color: var(--text-muted);
+      font-size: 1.05em;
+      margin-bottom: 32px;
+      max-width: 640px;
+    }
+
+    /* Terminal */
+    .terminal {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 24px 0;
+      font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+      font-size: 0.85em;
+      line-height: 1.65;
+    }
+    .terminal-bar {
+      background: var(--surface);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-dot {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .terminal-dot.r { background: #ff5f57; }
+    .terminal-dot.y { background: #febc2e; }
+    .terminal-dot.g { background: #28c840; }
+    .terminal-title {
+      color: var(--text-muted);
+      font-size: 0.85em;
+      margin-left: 8px;
+    }
+    .terminal-body {
+      padding: 16px 20px;
+      overflow-x: auto;
+    }
+    .t-prompt { color: var(--purple); }
+    .t-cmd { color: var(--text); }
+    .t-ok { color: var(--green); }
+    .t-block { color: var(--red); }
+    .t-soft { color: var(--yellow); }
+    .t-muted { color: var(--text-muted); }
+    .t-accent { color: var(--accent); }
+    .t-flag { color: var(--purple); }
+    .t-dim { color: #484f58; }
+
+    /* Features */
+    .features {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 32px;
+    }
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px;
+    }
+    .feature h3 {
+      font-size: 1em;
+      margin-bottom: 8px;
+    }
+    .feature p {
+      color: var(--text-muted);
+      font-size: 0.92em;
+      line-height: 1.55;
+    }
+
+    /* How it works */
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      margin-top: 32px;
+    }
+    .step {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+      padding: 20px 0;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.9em;
+      color: var(--accent);
+    }
+    .step-content h3 {
+      font-size: 1em;
+      margin-bottom: 4px;
+    }
+    .step-content p {
+      color: var(--text-muted);
+      font-size: 0.95em;
+    }
+    .step-content code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 0.9em;
+    }
+
+    /* Comparison */
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 32px;
+    }
+    .compare-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px;
+    }
+    .compare-card h3 {
+      font-size: 0.95em;
+      margin-bottom: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .compare-card.before h3 { color: var(--red); }
+    .compare-card.after h3 { color: var(--green); }
+    .compare-card p, .compare-card li {
+      font-size: 0.92em;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+    .compare-card ul {
+      list-style: none;
+      padding: 0;
+    }
+    .compare-card ul li {
+      padding: 4px 0;
+    }
+    .compare-card ul li::before {
+      content: "- ";
+      color: var(--text-muted);
+    }
+
+    /* YAML */
+    .yaml-block {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin: 24px 0;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 0.85em;
+      line-height: 1.7;
+      overflow-x: auto;
+    }
+    .y-key { color: var(--accent); }
+    .y-val { color: var(--green); }
+    .y-comment { color: #484f58; }
+
+    /* Footer */
+    footer {
+      padding: 48px 0;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.9em;
+    }
+    footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    footer a:hover { text-decoration: underline; }
+    footer p { margin: 6px 0; }
+
+    /* Separator */
+    .sep {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 0;
+    }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      .hero { padding: 48px 0 40px; }
+      .hero h1 { font-size: 1.8em; }
+      .features, .compare { grid-template-columns: 1fr; }
+      section { padding: 40px 0; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Hero -->
+<div class="container">
+  <div class="hero">
+    <h1><span>AORTA</span> for Large Language Models</h1>
+    <p class="tagline">Deterministic governance for Claude Code</p>
+    <p class="hook">
+      You tell Claude Code "don't touch .env" in a system prompt.
+      It works, until context compaction drops that instruction
+      or the agent reasons itself into an exception.<br>
+      <strong>System prompts are suggestions. Tool calls are actions.</strong>
+    </p>
+    <div class="cta-row">
+      <a href="https://github.com/andreasschmidtjensen/aorta4llm" class="cta cta-primary">View on GitHub</a>
+      <a href="#getting-started" class="cta cta-secondary">Get started</a>
+    </div>
+  </div>
+</div>
+
+<hr class="sep">
+
+<!-- The problem / the approach -->
+<section>
+  <div class="container">
+    <div class="compare">
+      <div class="compare-card before">
+        <h3>Without governance</h3>
+        <ul>
+          <li>System prompt says "don't modify config" but the agent does it anyway after context compaction</li>
+          <li>No way to express "commit only after tests pass"</li>
+          <li>Agent can write anywhere you can write</li>
+          <li>No audit trail of what was blocked or approved</li>
+        </ul>
+      </div>
+      <div class="compare-card after">
+        <h3>With aorta</h3>
+        <ul>
+          <li>Write to config/ &rarr; deterministically blocked, regardless of context</li>
+          <li>Commit gate: tests must pass first, achievement resets on file change</li>
+          <li>Agent scoped to src/ and tests/. Everything else is blocked</li>
+          <li>Every check logged, monitor in real-time with <code>aorta watch</code></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- See it in action -->
+<section>
+  <div class="container">
+    <h2>See it <span>in action</span></h2>
+    <p class="section-sub">A real Claude Code session with aorta governance active. Every block is deterministic. The engine decides, not the LLM.</p>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot r"></span>
+        <span class="terminal-dot y"></span>
+        <span class="terminal-dot g"></span>
+        <span class="terminal-title">Claude Code</span>
+      </div>
+      <div class="terminal-body">
+<span class="t-prompt">&#10095;</span> <span class="t-cmd">Create a Task dataclass in src/models/task.py</span>
+<br><span class="t-ok">&#9654; Write(src/models/task.py)</span>
+<br><span class="t-muted">  Wrote 8 lines to src/models/task.py</span>
+<br>
+<br><span class="t-prompt">&#10095;</span> <span class="t-cmd">Create a README.md at the project root</span>
+<br><span class="t-block">&#9654; Write(README.md)</span>
+<br><span class="t-block">  Write to README.md blocked: path is outside allowed scopes ['src/', 'tests/']</span>
+<br><span class="t-muted">  To grant a one-time exception: aorta allow-once README.md</span>
+<br>
+<br><span class="t-prompt">&#10095;</span> <span class="t-cmd">Read the contents of .env</span>
+<br><span class="t-block">  Read .env blocked: path matches forbidden prefix '.env'</span>
+<br>
+<br><span class="t-prompt">&#10095;</span> <span class="t-cmd">Read config/settings.yaml and tell me what's in it</span>
+<br><span class="t-ok">&#9654; Read(config/settings.yaml)</span>
+<br><span class="t-soft">  [GOVERNANCE NOTICE] 'config/settings.yaml' is marked as sensitive.</span>
+<br><span class="t-soft">  Do NOT copy, embed, or hardcode specific values from this file.</span>
+<br>
+<br><span class="t-muted">  The file contains configuration for three services: database, api,</span>
+<br><span class="t-muted">  and redis. Per the governance policy, I won't reproduce the specific</span>
+<br><span class="t-muted">  values. If you need these in code, I'd reference them via environment</span>
+<br><span class="t-muted">  variable lookups.</span>
+<br>
+<br><span class="t-prompt">&#10095;</span> <span class="t-cmd">Stage and commit with message "feat: add task model"</span>
+<br><span class="t-soft">  SOFT BLOCK: command contains 'git commit'</span>
+<br><span class="t-soft">  Ask the user to confirm, then retry the exact same command.</span>
+<br>
+<br><span class="t-prompt">&#10095;</span> <span class="t-cmd">Yes.</span>
+<br><span class="t-ok">  [main 1b10f16] feat: add task model</span>
+      </div>
+    </div>
+
+    <!-- Watch terminal -->
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot r"></span>
+        <span class="terminal-dot y"></span>
+        <span class="terminal-dot g"></span>
+        <span class="terminal-title">aorta watch</span>
+      </div>
+      <div class="terminal-body">
+<span class="t-muted">17:27:16</span> <span class="t-ok">&#10003;</span> <span class="t-muted">agent</span> write_file <span class="t-accent">src/models/task.py</span>
+<br><span class="t-muted">17:27:47</span> <span class="t-block">&#10007;</span> <span class="t-muted">agent</span> write_file <span class="t-accent">README.md</span> <span class="t-block">[hard]</span> <span class="t-dim"> - path is outside allowed scopes</span>
+<br><span class="t-muted">17:28:27</span> <span class="t-block">&#10007;</span> <span class="t-muted">agent</span> read_file <span class="t-accent">.env</span> <span class="t-block">[hard]</span> <span class="t-dim"> - path matches forbidden prefix '.env'</span>
+<br><span class="t-muted">17:28:36</span> <span class="t-soft">&#9873;</span> allow-once .env
+<br><span class="t-muted">17:28:44</span> <span class="t-ok">&#10003;</span> <span class="t-muted">agent</span> read_file <span class="t-accent">.env</span> <span class="t-dim"> - allow-once exception</span>
+<br><span class="t-muted">17:29:32</span> <span class="t-ok">&#10003;</span> <span class="t-muted">agent</span> read_file <span class="t-accent">config/settings.yaml</span>
+<br><span class="t-muted">17:30:02</span> <span class="t-block">&#10007;</span> <span class="t-muted">agent</span> execute_command <span class="t-soft">[soft]</span> <span class="t-dim"> - git commit</span>
+<br><span class="t-muted">17:30:12</span> <span class="t-ok">&#10003;</span> <span class="t-muted">agent</span> execute_command <span class="t-soft">[soft]</span> <span class="t-dim"> - git commit (confirmed)</span>
+<br><span class="t-muted">17:32:22</span> <span class="t-accent">&#9733;</span> <span class="t-muted">agent</span> achieved <span class="t-accent">tests_passing</span>
+<br><span class="t-muted">17:32:46</span> <span class="t-soft">&#8634;</span> <span class="t-muted">agent</span> reset <span class="t-accent">tests_passing</span> <span class="t-dim"> - file changed</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- Features -->
+<section>
+  <div class="container">
+    <h2>What it <span>enforces</span></h2>
+    <p class="section-sub">Enforcement happens at the tool call layer, outside the context window. The LLM never decides whether a rule applies.</p>
+
+    <div class="features">
+      <div class="feature">
+        <h3>File access control</h3>
+        <p>Declare paths as read-write, read-only, or no-access. Writes outside scope are blocked before execution. Not suggested against. Blocked.</p>
+      </div>
+      <div class="feature">
+        <h3>Self-protection</h3>
+        <p>The agent cannot edit its governance config, cannot delete the hooks, and cannot run <code>aorta reset</code>. The guardrails guard themselves.</p>
+      </div>
+      <div class="feature">
+        <h3>Bash analysis</h3>
+        <p>Shell commands are analyzed for hidden file writes. <code>cp src/app.py /tmp/leak.py</code> is caught even though the Bash tool itself is allowed.</p>
+      </div>
+      <div class="feature">
+        <h3>Conditional enforcement</h3>
+        <p>"Commit only after tests pass" with automatic achievement tracking. Tests pass &rarr; commit unlocked &rarr; file change &rarr; achievement reset.</p>
+      </div>
+      <div class="feature">
+        <h3>Soft blocks</h3>
+        <p>Git commit/push require user confirmation. Guards against post-compaction hallucinated commits where the agent acts on stale context.</p>
+      </div>
+      <div class="feature">
+        <h3>Sensitive content warnings</h3>
+        <p>When the agent reads a read-only file, a governance notice tells it not to hardcode values. In testing, Claude refused to embed a database password.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- Getting started -->
+<section id="getting-started">
+  <div class="container">
+    <h2>Getting <span>started</span></h2>
+    <p class="section-sub">One command to set up. YAML to configure. Works with Claude Code hooks today.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h3>Install</h3>
+          <p>Requires Python &ge; 3.10. No dependencies beyond PyYAML.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot r"></span>
+        <span class="terminal-dot y"></span>
+        <span class="terminal-dot g"></span>
+        <span class="terminal-title">Terminal</span>
+      </div>
+      <div class="terminal-body">
+<span class="t-prompt">$</span> <span class="t-cmd">uv tool install git+https://github.com/andreasschmidtjensen/aorta4llm.git</span>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h3>Initialize in your project</h3>
+          <p>Creates the org spec, hooks config, state file, and registers the agent. One command.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot r"></span>
+        <span class="terminal-dot y"></span>
+        <span class="terminal-dot g"></span>
+        <span class="terminal-title">Terminal - your project</span>
+      </div>
+      <div class="terminal-body">
+<span class="t-prompt">$</span> <span class="t-cmd">cd my-project</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta init --template safe-agent --scope src/ tests/</span>
+<br>
+<br><span class="t-muted">Created org spec at .aorta/safe-agent.yaml</span>
+<br><span class="t-muted">  Allowed scope(s): src/ tests/</span>
+<br><span class="t-muted">Wrote hooks config to .claude/settings.local.json</span>
+<br><span class="t-muted">Registered agent 'agent' as 'agent' with scope 'src/ tests/'</span>
+<br>
+<br><span class="t-muted">Setup complete:</span>
+<br><span class="t-muted">  Org spec:  .aorta/safe-agent.yaml</span>
+<br><span class="t-muted">  Hooks:     .claude/settings.local.json</span>
+<br><span class="t-muted">  Agent:     agent (role: agent, scope: src/ tests/)</span>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h3>Configure access</h3>
+          <p>The <code>access</code> map in the YAML spec is the primary interface. Three levels: read-write, read-only, no-access.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="yaml-block">
+<span class="y-key">access:</span>
+<br>&nbsp;&nbsp;<span class="y-key">src/:</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="y-val">read-write</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="y-comment"># agent can read and write</span>
+<br>&nbsp;&nbsp;<span class="y-key">tests/:</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="y-val">read-write</span>
+<br>&nbsp;&nbsp;<span class="y-key">config/:</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="y-val">read-only</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="y-comment"># agent can read, writes blocked</span>
+<br>&nbsp;&nbsp;<span class="y-key">.env:</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="y-val">no-access</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="y-comment"># reads and writes blocked</span>
+<br>&nbsp;&nbsp;<span class="y-key">secrets/:</span>&nbsp;&nbsp;&nbsp;<span class="y-val">no-access</span>
+<br>&nbsp;&nbsp;<span class="y-key">"*.key":</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="y-val">no-access</span>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h3>Use Claude Code normally</h3>
+          <p>Every Write, Edit, Read, and Bash call goes through governance automatically. Open <code>aorta watch</code> in a second terminal to see decisions in real-time.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- How it works -->
+<section>
+  <div class="container">
+    <h2>How it <span>works</span></h2>
+    <p class="section-sub">The governance engine sits between Claude Code and your filesystem via hooks. No modifications to Claude Code itself.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h3>Hook intercepts</h3>
+          <p>Claude Code calls a tool (Write, Edit, Bash, Read). The hook in <code>.claude/settings.local.json</code> fires <code>aorta hook pre-tool-use</code> before execution.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h3>Engine evaluates</h3>
+          <p>The pure-Python governance engine checks the action against compiled norms. Path-based rules use structural unification: variables bind at check time and propagate through conditions. No LLM involved in the decision.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h3>Block or approve</h3>
+          <p>Hard blocks deny outright. Soft blocks prompt the user to confirm. Approvals pass through. Every decision is logged to the event stream.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- CLI -->
+<section>
+  <div class="container">
+    <h2>CLI <span>tools</span></h2>
+    <p class="section-sub">Manage governance from the command line. The agent can run read-only commands; mutating commands are blocked.</p>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot r"></span>
+        <span class="terminal-dot y"></span>
+        <span class="terminal-dot g"></span>
+        <span class="terminal-title">Terminal</span>
+      </div>
+      <div class="terminal-body">
+<span class="t-prompt">$</span> <span class="t-cmd">aorta permissions</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# show effective access map</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta status</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# agents, norms, activity</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta watch</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# live event tail</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta allow-once .env</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# one-time exception</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta dry-run --tool Write --path .env</span> <span class="t-dim"># test offline</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta doctor</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# verify setup</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta template add test-gate</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# compose templates</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta protect "*.pem" "*.key"</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# shorthand for no-access</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- Limitations -->
+<section>
+  <div class="container">
+    <h2>Honest <span>limitations</span></h2>
+    <p class="section-sub">This is a meaningful layer of defense, not a security boundary. Here's what it can and can't do.</p>
+
+    <div class="features">
+      <div class="feature">
+        <h3>Content, not just access</h3>
+        <p>aorta blocks <em>writing to</em> .env but can't prevent the agent from reading a file (via allow-once) and pasting its contents elsewhere. The sensitive content warning is a prompt-level nudge, not enforcement.</p>
+      </div>
+      <div class="feature">
+        <h3>Bash escape hatch</h3>
+        <p>An agent can construct commands that evade heuristic detection (e.g., <code>python -c "open('x','w')..."</code>). LLM analysis catches most but isn't bulletproof.</p>
+      </div>
+      <div class="feature">
+        <h3>No filesystem monitoring</h3>
+        <p>Governance only sees tool calls, not side effects. If a command creates files indirectly, the engine doesn't know.</p>
+      </div>
+      <div class="feature">
+        <h3>Claude Code only (for now)</h3>
+        <p>The governance engine is generic, but the hook integration is specific to Claude Code. The architecture could adapt to other agent runtimes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- Background -->
+<section>
+  <div class="container">
+    <h2>Background</h2>
+    <p class="section-sub">
+      aorta4llm applies the <a href="https://orbit.dtu.dk/en/publications/the-aorta-reasoning-framework" style="color: var(--accent); text-decoration: none;">AORTA organizational reasoning framework</a> (Jensen, 2015) to LLM agent systems.
+    </p>
+    <p style="color: var(--text-muted); line-height: 1.7; max-width: 680px;">
+      The original framework formalized how autonomous agents can reason about organizational structures (roles, norms, obligations, prohibitions) and act accordingly. This project adapts those ideas to a new kind of agent: LLMs with tool access.
+    </p>
+    <p style="color: var(--text-muted); line-height: 1.7; max-width: 680px; margin-top: 16px;">
+      The hybrid architecture uses LLMs for what they're good at (natural language, planning) and a deterministic logic engine for what they're bad at (consistent rule enforcement). The engine doesn't suggest compliance. It enforces it.
+    </p>
+  </div>
+</section>
+
+<hr class="sep">
+
+<footer>
+  <div class="container">
+    <p><a href="https://github.com/andreasschmidtjensen/aorta4llm">GitHub</a> &middot; <a href="https://github.com/andreasschmidtjensen/aorta4llm/blob/main/docs/getting-started.md">Full documentation</a> &middot; <a href="https://orbit.dtu.dk/en/publications/the-aorta-reasoning-framework">AORTA thesis (DTU, 2015)</a></p>
+    <p style="margin-top: 16px; font-size: 0.8em;">This project was built with the help of AI (Claude Code).</p>
+  </div>
+</footer>
+
+</body>
+</html>
