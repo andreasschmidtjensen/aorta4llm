@@ -276,12 +276,12 @@ def run(args):
     print(f"Registered agent '{agent_name}' as '{role}' with scope '{scope_str}'")
 
     # 7. Create slash commands for agent introspection.
-    commands_dir = Path(".claude/commands")
+    commands_dir = Path(".claude/commands/aorta")
     commands_dir.mkdir(parents=True, exist_ok=True)
-    (commands_dir / "aorta-permissions.md").write_text(
+    (commands_dir / "permissions.md").write_text(
         f"Run `aorta permissions --org-spec {spec_rel}` and show the output.\n"
     )
-    (commands_dir / "aorta-status.md").write_text(
+    (commands_dir / "status.md").write_text(
         f"Run `aorta status --org-spec {spec_rel}` and show the output.\n"
     )
     print(f"Created slash commands in {commands_dir}")
@@ -292,7 +292,7 @@ def run(args):
     print(f"  Hooks:     {settings_path}")
     print(f"  Events:    {events_rel}")
     print(f"  Agent:     {agent_name} (role: {role}, scope: {scope_str})")
-    print(f"  Commands:  /project:aorta-permissions, /project:aorta-status")
+    print(f"  Commands:  /aorta:permissions, /aorta:status")
     if needs_post:
         print(f"  PostToolUse hooks enabled (achievement triggers detected)")
 

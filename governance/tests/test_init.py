@@ -54,8 +54,8 @@ class TestRunInit:
     def test_init_creates_slash_commands(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         run(self._make_args())
-        perms = tmp_path / ".claude" / "commands" / "aorta-permissions.md"
-        status = tmp_path / ".claude" / "commands" / "aorta-status.md"
+        perms = tmp_path / ".claude" / "commands" / "aorta" / "permissions.md"
+        status = tmp_path / ".claude" / "commands" / "aorta" / "status.md"
         assert perms.exists()
         assert status.exists()
         assert "aorta permissions" in perms.read_text()

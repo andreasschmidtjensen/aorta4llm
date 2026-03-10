@@ -19,7 +19,7 @@ This creates:
 - `.claude/settings.local.json` — Claude Code hook configuration
 - `.aorta/state.json` — event-sourced state (project-local)
 - `.aorta/events.jsonl` — event log for `aorta watch`
-- `.claude/commands/aorta-permissions.md` and `aorta-status.md` — slash commands for agent introspection
+- `.claude/commands/aorta/permissions.md` and `status.md` — slash commands for agent introspection
 - Registers agent `agent` with scope `src/`
 
 Multiple scopes are supported:
@@ -223,8 +223,8 @@ Edit `safe_commands` directly in your `.aorta/<template>.yaml`. These are prefix
 
 `aorta init` creates slash commands that the agent can use during a Claude Code session:
 
-- `/project:aorta-permissions` — show effective permissions
-- `/project:aorta-status` — show governance state
+- `/aorta:permissions` — show effective permissions
+- `/aorta:status` — show governance state
 
 These run read-only `aorta` commands. The agent can also run `aorta status`, `aorta permissions`, `aorta explain`, `aorta validate`, and `aorta doctor` directly via Bash — read-only aorta commands are allowed. Only mutating commands (`init`, `reset`, `allow-once`, etc.) are blocked.
 
