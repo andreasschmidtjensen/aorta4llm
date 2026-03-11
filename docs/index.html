@@ -139,7 +139,24 @@
     .terminal-body {
       padding: 16px 20px;
       overflow-x: auto;
+      position: relative;
     }
+    .copy-btn {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: 12px;
+      display: flex;
+      align-items: center;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0;
+      transition: color 0.15s;
+    }
+    .copy-btn:hover { color: var(--text); }
+    .copy-btn svg { width: 18px; height: 18px; }
     .t-prompt { color: var(--purple); }
     .t-cmd { color: var(--text); }
     .t-ok { color: var(--green); }
@@ -485,6 +502,7 @@
         <span class="terminal-title">Terminal</span>
       </div>
       <div class="terminal-body">
+<button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
 <span class="t-prompt">$</span> <span class="t-cmd">uv tool install git+https://github.com/andreasschmidtjensen/aorta4llm.git</span>
       </div>
     </div>
@@ -673,5 +691,13 @@
   </div>
 </footer>
 
+<script>
+function copyInstall(btn) {
+  navigator.clipboard.writeText('uv tool install git+https://github.com/andreasschmidtjensen/aorta4llm.git');
+  var orig = btn.innerHTML;
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  setTimeout(function() { btn.innerHTML = orig; }, 1500);
+}
+</script>
 </body>
 </html>

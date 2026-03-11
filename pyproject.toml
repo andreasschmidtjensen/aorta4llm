@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aorta4llm"
-version = "0.2.1"
+version = "0.2.2"
 description = "Organizational reasoning for LLM agent systems"
 requires-python = ">=3.10"
 dependencies = [
@@ -21,6 +21,9 @@ aorta = "cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["governance", "integration", "cli"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"org-specs/templates" = "cli/org-specs/templates"
 
 [tool.pytest.ini_options]
 testpaths = ["governance/tests"]

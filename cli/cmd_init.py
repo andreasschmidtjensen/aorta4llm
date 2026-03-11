@@ -7,7 +7,9 @@ from pathlib import Path
 
 import yaml
 
-TEMPLATES_DIR = Path(__file__).parent.parent / "org-specs" / "templates"
+_WHEEL_TEMPLATES = Path(__file__).parent / "org-specs" / "templates"
+_DEV_TEMPLATES = Path(__file__).parent.parent / "org-specs" / "templates"
+TEMPLATES_DIR = _WHEEL_TEMPLATES if _WHEEL_TEMPLATES.is_dir() else _DEV_TEMPLATES
 
 
 def _is_aorta_hook(hook_entry: dict) -> bool:
