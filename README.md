@@ -124,28 +124,32 @@ aorta protect "*.key" "*.pem"    # shorthand for no-access
 ## Project structure
 
 ```
-governance/
-  terms.py           Term representation, parser, unification
-  evaluator.py       Condition evaluator, fact database
-  py_engine.py       Governance engine
-  engine_types.py    Data types
-  compiler.py        YAML org specs -> facts/rules
-  service.py         High-level API
-  validator.py       Org spec schema validation
-  bash_analyzer.py   Heuristic + LLM bash command analysis
-  tests/             pytest test suite
-integration/
-  hooks.py           Claude Code hook handlers + CLI
-  events.py          JSONL event logger
-cli/
-  main.py            Unified CLI (aorta init, validate, dry-run)
-  cmd_init.py        Project scaffolding from templates
-  cmd_validate.py    Org spec validation
-  cmd_dry_run.py     Test governance checks offline
-org-specs/
-  templates/         Templates for aorta init (safe-agent, test-gate)
+src/aorta4llm/
+  governance/
+    terms.py           Term representation, parser, unification
+    evaluator.py       Condition evaluator, fact database
+    py_engine.py       Governance engine
+    engine_types.py    Data types
+    compiler.py        YAML org specs -> facts/rules
+    service.py         High-level API
+    validator.py       Org spec schema validation
+    bash_analyzer.py   Heuristic + LLM bash command analysis
+  integration/
+    hooks.py           Claude Code hook handlers + CLI
+    events.py          JSONL event logger
+  cli/
+    main.py            Unified CLI (aorta init, validate, dry-run)
+    cmd_init.py        Project scaffolding from templates
+    cmd_validate.py    Org spec validation
+    cmd_dry_run.py     Test governance checks offline
+  org-specs/
+    templates/         Templates for aorta init (safe-agent, test-gate)
+tests/
+  governance/          Engine, compiler, terms, service tests
+  integration/         Hook, access map, soft block tests
+  cli/                 CLI command tests
 docs/
-  getting-started.md Hands-on setup and usage guide
+  getting-started.md   Hands-on setup and usage guide
 ```
 
 ## Architecture and theory

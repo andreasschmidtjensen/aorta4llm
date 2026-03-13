@@ -13,6 +13,8 @@ uv run pytest -v
 
 ## Architecture
 
+All source lives under `src/aorta4llm/`:
+
 - **governance/terms.py**: Term representation (Var, Atom, Term), parser for Prolog-syntax strings, structural unification.
 - **governance/evaluator.py**: In-memory fact database and condition evaluator.
 - **governance/py_engine.py**: Pure-Python governance engine. Implements NC/OG phases using terms.py and evaluator.py.
@@ -28,7 +30,7 @@ uv run pytest -v
 
 - **Permissions are derived, not stored.** An action is permitted unless an active prohibition blocks it (Section 4.1 of the dissertation).
 - **Non-ground prohibitions are evaluated at check time**, not during NC phase activation. The engine evaluates `cond/5` prohibitions directly by unifying the action with the objective to bind shared variables before calling the condition.
-- **Variable sharing** between `cond/5` objective and condition is the core mechanism. When the compiler emits `cond(R, forbidden, write_file(Path), D, not(in_scope(Path, Scope)))`, `Path` appears in both — unification with a concrete action binds it everywhere. The Python engine implements this via `governance/terms.py` unification.
+- **Variable sharing** between `cond/5` objective and condition is the core mechanism. When the compiler emits `cond(R, forbidden, write_file(Path), D, not(in_scope(Path, Scope)))`, `Path` appears in both — unification with a concrete action binds it everywhere. The Python engine implements this via `src/aorta4llm/governance/terms.py` unification.
 
 ## Git Conventions
 
@@ -37,7 +39,7 @@ uv run pytest -v
 ## Coding Conventions
 
 - Python: type hints, dataclasses for data carriers, no unnecessary abstractions.
-- Tests: one test file per module in `governance/tests/`, use pytest fixtures, group related tests in classes.
+- Tests: in `tests/` organized by package (`tests/governance/`, `tests/integration/`, `tests/cli/`), use pytest fixtures, group related tests in classes.
 - Org specs: YAML mirrors the metamodel structure from DESIGN.md Table 6.1.
 
 ## Claude Code Integration
