@@ -86,6 +86,9 @@ def validate_spec(spec_dict: dict) -> ValidationResult:
             result.errors.append(f"{label}: required_before requires 'requires'")
         if norm_type == "forbidden_command" and "command_pattern" not in norm:
             result.errors.append(f"{label}: forbidden_command requires 'command_pattern'")
+        if norm_type == "forbidden_command" and "message" in norm:
+            if not isinstance(norm["message"], str):
+                result.errors.append(f"{label}: 'message' must be a string")
 
         severity = norm.get("severity")
         if severity and severity not in VALID_SEVERITIES:

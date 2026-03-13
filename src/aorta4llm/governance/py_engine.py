@@ -87,6 +87,7 @@ class PythonGovernanceEngine:
         ("role", 2), ("obj", 2), ("dep", 3), ("cap", 2), ("cond", 5),
         ("rea", 2), ("norm", 5), ("viol", 4), ("achieved", 1),
         ("deadline_reached", 1), ("current_scope", 1), ("soft_norm", 2), ("soft_norm", 3),
+        ("block_message", 4),
     ]
 
     def __init__(self):
@@ -190,11 +191,13 @@ class PythonGovernanceEngine:
             blocked_obj, severity, block_reason = self._check_action_blocked(agent, role, action_term)
             if blocked_obj is not None:
                 action_str = term_to_str(action_term)
+                custom_msg = self._lookup_block_message(role, action_term)
                 return PermissionResult(
                     permitted=False,
                     reason=f"{action_str} blocked for {agent} (role: {role}): {block_reason}",
                     violation=f"viol('{agent}', {role}, forbidden, {action_str})",
                     severity=severity,
+                    block_message=custom_msg,
                 )
 
             action_str = term_to_str(action_term)
@@ -486,6 +489,27 @@ class PythonGovernanceEngine:
             if unify(objective, s_obj) is not None:
                 return "soft"
         return "hard"
+
+    def _lookup_block_message(self, role: str, action: Term) -> str | None:
+        """Look up a custom block_message for a blocked action.
+
+        Searches block_message(role, objective, condition, message) facts.
+        Uses unification to match the action against the objective and
+        evaluates the condition to confirm the match.
+        """
+        for args in self._facts.get_all("block_message", 4):
+            bm_role, bm_obj, bm_cond, bm_msg = args
+            if not (isinstance(bm_role, Atom) and bm_role.value == role):
+                continue
+            subst = unify(action, bm_obj)
+            if subst is None:
+                continue
+            bound_cond = apply_subst(bm_cond, subst)
+            if self._evaluator.evaluate_bool(bound_cond, subst):
+                if isinstance(bm_msg, Atom):
+                    return bm_msg.value
+                return term_to_str(bm_msg)
+        return None
 
     # --- Norm/violation snapshots ---
 

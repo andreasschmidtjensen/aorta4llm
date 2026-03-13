@@ -230,6 +230,13 @@ def _compile_forbidden_command(norm: dict, spec: CompiledSpec) -> None:
     if norm.get("severity") == "soft":
         spec.facts.append(f"soft_norm({role}, execute_command(Cmd), str_contains(Cmd, {quoted}))")
 
+    message = norm.get("message")
+    if message:
+        escaped = message.replace("'", "\\'")
+        spec.facts.append(
+            f"block_message({role}, execute_command(Cmd), str_contains(Cmd, {quoted}), '{escaped}')"
+        )
+
 
 def _ensure_in_scope_rule(spec: CompiledSpec) -> None:
     """Add the standard in_scope/2 rule if not already present."""

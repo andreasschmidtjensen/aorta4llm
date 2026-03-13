@@ -11,6 +11,7 @@ class PermissionResult:
     reason: str
     violation: str | None = None
     severity: str = "hard"  # "hard" (default) or "soft" (confirmation-required)
+    block_message: str | None = None  # Custom message from block_message facts
 
 
 @dataclass

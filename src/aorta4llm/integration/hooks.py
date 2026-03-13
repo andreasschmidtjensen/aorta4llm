@@ -411,6 +411,8 @@ class GovernanceHook:
         if not result.permitted:
             if result.severity == "soft":
                 soft_result = self._handle_soft_block(result.reason, params)
+                if result.block_message and soft_result["decision"] == "block":
+                    soft_result["reason"] += f"\n  Hint: {result.block_message}"
                 log({
                     "type": "check", "agent": agent_id, "role": role,
                     "action": action, "path": params.get("path", ""),
@@ -421,6 +423,8 @@ class GovernanceHook:
             short_reason = _shorten_block_reason(result.reason)
             display = _display_action(action, path)
             user_reason = f"{display} blocked: {short_reason}"
+            if result.block_message:
+                user_reason += f"\n  Hint: {result.block_message}"
             # For write blocks from access-map rules (not scope violations),
             # show the allowed write scopes so the agent knows where it CAN write.
             if (action == "write_file" and path
