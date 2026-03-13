@@ -101,8 +101,12 @@ def run(args):
         print("\nUsage: aorta init --template <name> --scope <dir>")
         raise SystemExit(1)
 
-    # Normalize scopes: ensure trailing slash
-    scopes = [s.rstrip("/") + "/" for s in args.scope]
+    # Normalize scopes: ensure trailing slash.
+    # Handle both "--scope src/ tests/" (multiple args) and "--scope 'src/ tests/'" (single arg with spaces).
+    raw_scopes = []
+    for s in args.scope:
+        raw_scopes.extend(s.split())
+    scopes = [s.rstrip("/") + "/" for s in raw_scopes]
     scope_str = " ".join(scopes)  # for display and registration
 
     # Handle --template minimal as a built-in (no YAML file needed).
