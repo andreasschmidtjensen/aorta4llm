@@ -73,9 +73,17 @@ This pattern composes well: post-write checks create obligations, obligation gat
 
 **Concern:** LLM behavior is inherently variable. Four edits vs. one edit for the same logical change. A `for` loop vs. individual commands. Hard thresholds will produce false positives.
 
-**Verdict:** Interesting but risky as a standalone feature. Better used as a **trigger for obligations** rather than a hard block. See Extension 7 (sanctions) — budget exceedance triggers an obligation to justify/confirm with the user rather than blocking outright.
+**Approach:** Opt-in budgets with generous defaults. When exceeded, place the agent on **hold** (same mechanism as thrashing detection, Extension 4). The user runs `aorta continue` to resume after reviewing.
 
-If implemented, should be opt-in with generous defaults and always soft-block severity.
+```yaml
+budgets:
+  max_files_modified: 15
+  max_bash_commands: 50
+```
+
+Unlike thrashing (which detects failure patterns), budgets cap the total blast radius regardless of success/failure. A budget hold means "you've touched a lot of things — let's check in."
+
+Should always be opt-in. Not appropriate for all workflows (e.g., large refactors legitimately touch many files).
 
 ---
 
@@ -108,7 +116,6 @@ thrashing_detection:
   window_size: 10          # look at last 10 commands
   failure_threshold: 0.5   # 50% failure rate triggers
   per_file_rewrites: 3     # same file written N times
-  severity: soft
 ```
 
 **What counts as a failure:**
@@ -116,9 +123,21 @@ thrashing_detection:
 - Any blocked action (hard or soft)
 - Same file written more than `per_file_rewrites` times (regardless of exit code — rewriting the same file repeatedly is thrashing even if each write "succeeds")
 
-**When triggered:** Create an obligation to ask the user for help. The obligation gate (Extension 1) ensures the agent can't just ignore this — it must resolve the obligation before gated commands proceed.
+**When triggered:** Place the agent on **hold** — a hard gate that blocks all writes until the user intervenes. Unlike soft blocks (which the agent can bypass by retrying), holds can only be cleared by the user running `aorta continue` from their terminal. Since agents are blocked from running `aorta` commands, this is genuinely user-only.
 
-**Implementation:** PostToolUse appends each command result to a ring buffer in `session_counters`. The buffer stores `{tool, action, success: bool}` for the last `window_size` actions. On each append, compute failure rate and check threshold. No need to persist across sessions — thrashing is a session-level signal.
+The hold mechanism:
+1. Thrashing detected → engine sets `hold: thrashing_detected` in state.json
+2. PreToolUse checks for active holds before any other check — if held, block with message: "Agent is on hold (thrashing detected: 6/10 recent actions failed). Run `aorta continue` to resume."
+3. User reviews the situation, then runs `aorta continue` to clear the hold
+4. Hold is cleared, ring buffer is reset, agent resumes
+
+This is distinct from soft blocks:
+- **Soft blocks**: low-friction nudge for known-risky actions (git commit, shell tools). Agent can proceed — acceptable because the action itself may be intentional.
+- **Holds**: the agent is stuck or out of bounds. Hard gate, user-only clearable. Used for thrashing, budget violations, and other "stop and think" situations.
+
+**Implementation:** PostToolUse appends each command result to a ring buffer in state.json's `session_counters`. The buffer stores `{tool, path, success}` for the last `window_size` actions. On each append, compute failure rate and check per-file rewrite counts. PreToolUse checks for active holds before processing any action.
+
+`aorta continue` CLI command: clears the hold, resets the ring buffer, logs a governance event. Also shown in `aorta status --tree` when active.
 
 ---
 

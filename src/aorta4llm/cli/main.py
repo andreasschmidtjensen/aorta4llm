@@ -30,6 +30,7 @@ def main():
     from aorta4llm.cli.cmd_access import add_parser as add_access
     from aorta4llm.cli.cmd_permissions import add_parser as add_permissions
     from aorta4llm.cli.cmd_include import add_parser as add_include
+    from aorta4llm.cli.cmd_continue import add_parser as add_continue
 
     add_validate(sub)
     add_dry_run(sub)
@@ -50,6 +51,7 @@ def main():
     add_access(sub)
     add_permissions(sub)
     add_include(sub)
+    add_continue(sub)
 
     args = parser.parse_args()
     if not args.command:

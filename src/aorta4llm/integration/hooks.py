@@ -71,6 +71,35 @@ _SAFE_AORTA_SUBCOMMANDS = frozenset({
 })
 
 
+def _command_is_piped(cmd: str) -> bool:
+    """Check if a shell command contains a pipe operator.
+
+    Ignores pipes inside quoted strings. This is a heuristic — it won't
+    catch every edge case, but covers the common patterns like
+    'pytest | tail -20' and 'cmd 2>&1 | grep error'.
+    """
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(cmd):
+        c = cmd[i]
+        if c == '\\' and not in_single:
+            i += 2  # skip escaped character
+            continue
+        if c == "'" and not in_double:
+            in_single = not in_single
+        elif c == '"' and not in_single:
+            in_double = not in_double
+        elif c == '|' and not in_single and not in_double:
+            # Distinguish | (pipe) from || (or)
+            if i + 1 < len(cmd) and cmd[i + 1] == '|':
+                i += 2  # skip ||
+                continue
+            return True
+        i += 1
+    return False
+
+
 def _normalize_git_cmd(cmd: str) -> str:
     """Strip git global options (like -C <path>) for command pattern matching.
 
@@ -238,14 +267,19 @@ class GovernanceHook:
         self._exceptions: list[dict] = []
         self._soft_block_window = extras[3]
         self._sensitive_paths = extras[4]
+        self._thrashing_config: dict = extras[5]
+        self._action_ring: list[dict] = []
+        self._hold: dict | None = None  # {"reason": "...", "ts": ...} or None
+        self._file_write_counts: dict[str, int] = {}  # path -> count
+        self._bash_command_count: int = 0  # cumulative bash commands
         self._reset_on_file_change: set[str] = {
             t["marks"] for t in self._triggers if t.get("reset_on_file_change")
         }
         self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
 
-    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str]]:
-        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, and sensitive paths."""
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict]:
+        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, sensitive paths, and guardrails."""
         try:
             with open(org_spec_path) as f:
                 spec = yaml.safe_load(f)
@@ -256,15 +290,17 @@ class GovernanceHook:
                 path for path, level in spec.get("access", {}).items()
                 if level in ("read-only", "no-access")
             )
+            guardrails = spec.get("guardrails", {})
             return (
                 spec.get("achievement_triggers", []),
                 bool(spec.get("bash_analysis", False)),
                 safe_cmds,
                 window,
                 sensitive,
+                guardrails,
             )
         except Exception:
-            return [], False, frozenset(), 60, frozenset()
+            return [], False, frozenset(), 60, frozenset(), {}
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state."""
@@ -275,6 +311,10 @@ class GovernanceHook:
         self._events = state.get("events", [])
         self._soft_block_cache = state.get("soft_blocks", {})
         self._exceptions = state.get("exceptions", [])
+        self._action_ring = state.get("action_ring", [])
+        self._hold = state.get("hold", None)
+        self._file_write_counts = state.get("file_write_counts", {})
+        self._bash_command_count = state.get("bash_command_count", 0)
         for event in self._events:
             etype = event["type"]
             if etype == "register":
@@ -294,7 +334,7 @@ class GovernanceHook:
         self._replaying = False
 
     def _save_state(self):
-        """Persist events, soft block timestamps, and exceptions to state file."""
+        """Persist events, soft block timestamps, exceptions, and guardrails state."""
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         state: dict = {
             "events": self._events,
@@ -302,12 +342,32 @@ class GovernanceHook:
         }
         if self._exceptions:
             state["exceptions"] = self._exceptions
+        if self._action_ring:
+            state["action_ring"] = self._action_ring
+        if self._hold:
+            state["hold"] = self._hold
+        if self._file_write_counts:
+            state["file_write_counts"] = self._file_write_counts
+        if self._bash_command_count:
+            state["bash_command_count"] = self._bash_command_count
         self._state_path.write_text(json.dumps(state, indent=2))
 
     def clear_transient_state(self):
         """Clear exceptions and soft block cache. Called during reinit."""
         self._soft_block_cache.clear()
         self._exceptions.clear()
+        self._save_state()
+
+    def clear_hold(self):
+        """Clear the active hold and reset guardrails counters.
+
+        Called by `aorta continue`. Resets ring buffer and file write counts
+        so that budget thresholds become periodic checkpoints.
+        """
+        self._hold = None
+        self._action_ring.clear()
+        self._file_write_counts.clear()
+        self._bash_command_count = 0
         self._save_state()
 
     def register_agent(self, agent: str, role: str, scope: str = "",
@@ -344,6 +404,20 @@ class GovernanceHook:
         action = TOOL_ACTION_MAP.get(tool_name)
         if not action:
             return {"decision": "approve"}
+
+        # Check for active hold — blocks all actions until user runs `aorta continue`.
+        if self._hold:
+            reason = (
+                f"HOLD: {self._hold['reason']}\n"
+                f"All actions are blocked until the hold is cleared.\n"
+                f"To continue: aorta continue"
+            )
+            log({
+                "type": "check", "agent": agent or "unknown", "role": "held",
+                "action": action, "path": "",
+                "decision": "block", "reason": "hold active", "severity": "hard",
+            })
+            return {"decision": "block", "reason": reason}
 
         agent_id = agent or context.get("agent_name", "default-agent")
         role = self._get_agent_role(agent_id)
@@ -525,9 +599,6 @@ class GovernanceHook:
                     ),
                 }
 
-        if not self._triggers:
-            return {"status": "ok"}
-
         tool_response = context.get("tool_response", {})
         exit_code = tool_response.get("exit_code", 0)
 
@@ -536,16 +607,25 @@ class GovernanceHook:
         if not role:
             return {"status": "ok"}
 
+        # Piped commands (e.g. "pytest | tail -20") have unreliable exit codes:
+        # the shell reports the last command's exit code, not the first.
+        # Skip exit-code-dependent triggers for piped commands.
+        raw_cmd = tool_input.get("command", "")
+        cmd_is_piped = _command_is_piped(raw_cmd) if tool_name == "Bash" else False
+
         achieved = []
         for trigger in self._triggers:
             if trigger.get("tool") != tool_name:
                 continue
             required_exit = trigger.get("exit_code")
-            if required_exit is not None and exit_code != required_exit:
-                continue
+            if required_exit is not None:
+                if cmd_is_piped:
+                    continue  # exit code is unreliable for piped commands
+                if exit_code != required_exit:
+                    continue
             pattern = trigger.get("command_pattern", "")
             if pattern:
-                cmd = tool_input.get("command", "")
+                cmd = raw_cmd
                 # Normalize git flags so 'git -C /path ...' matches patterns.
                 cmd = _normalize_git_cmd(cmd)
                 if not re.search(pattern, cmd):
@@ -564,7 +644,150 @@ class GovernanceHook:
                     {"type": "achieved", "agent": agent_id, "role": role, "mark": mark},
                 )
 
+        # Guardrails tracking.
+        result = self._check_guardrails(context, agent_id)
+        if result:
+            return result
+
         return {"status": "ok"}
+
+    def _check_guardrails(self, context: dict, agent_id: str) -> dict | None:
+        """Run guardrails checks after a tool use completes.
+
+        Tracks actions in a ring buffer and checks for:
+        - failure_rate: high failure rate in recent actions
+        - per_file_rewrites: same file written too many times
+        - files_modified: total unique files modified
+        - bash_commands: total bash commands executed
+
+        Each check can trigger a hold (hard gate) or warning (stderr nudge).
+        Returns a result dict if a warning/hold was triggered, None otherwise.
+        """
+        if not self._thrashing_config:
+            return None
+
+        tool_name = context.get("tool_name", "")
+        tool_input = context.get("tool_input", {})
+        tool_response = context.get("tool_response", {})
+        action = TOOL_ACTION_MAP.get(tool_name)
+        if not action:
+            return None
+
+        exit_code = tool_response.get("exit_code")
+        failed = (exit_code is not None and exit_code != 0)
+
+        # Track in ring buffer (for failure_rate).
+        window_size = self._thrashing_config.get("window_size", 10)
+        self._action_ring.append({"tool": tool_name, "failed": failed})
+        if len(self._action_ring) > window_size:
+            self._action_ring = self._action_ring[-window_size:]
+
+        # Track file writes (for per_file_rewrites and files_modified).
+        if action == "write_file":
+            raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+            if raw_path:
+                rel_path = _make_relative(raw_path, self._org_spec_path)
+                self._file_write_counts[rel_path] = self._file_write_counts.get(rel_path, 0) + 1
+
+        # Track bash commands (cumulative, for bash_commands budget).
+        if tool_name == "Bash":
+            self._bash_command_count += 1
+
+        self._save_state()
+
+        warnings = []
+
+        # Check failure_rate.
+        fr_config = self._thrashing_config.get("failure_rate")
+        if fr_config and len(self._action_ring) >= window_size:
+            threshold = fr_config.get("threshold", 0.5)
+            failures = sum(1 for a in self._action_ring if a["failed"])
+            rate = failures / len(self._action_ring)
+            if rate >= threshold:
+                msg = (
+                    f"High failure rate: {failures}/{len(self._action_ring)} "
+                    f"recent actions failed ({rate:.0%} >= {threshold:.0%} threshold)"
+                )
+                result = self._apply_guardrail(fr_config, msg, agent_id)
+                if result:
+                    return result
+                warnings.append(msg)
+
+        # Check per_file_rewrites.
+        pf_config = self._thrashing_config.get("per_file_rewrites")
+        if pf_config and action == "write_file":
+            threshold = pf_config.get("threshold", 3)
+            raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+            if raw_path:
+                rel_path = _make_relative(raw_path, self._org_spec_path)
+                count = self._file_write_counts.get(rel_path, 0)
+                if count >= threshold:
+                    msg = (
+                        f"File '{rel_path}' has been modified {count} times "
+                        f"(threshold: {threshold}). Consider stepping back and rethinking."
+                    )
+                    result = self._apply_guardrail(pf_config, msg, agent_id)
+                    if result:
+                        return result
+                    warnings.append(msg)
+
+        # Check files_modified (unique files written).
+        fm_config = self._thrashing_config.get("files_modified")
+        if fm_config:
+            threshold = fm_config.get("threshold", 15)
+            if len(self._file_write_counts) >= threshold:
+                msg = (
+                    f"Modified {len(self._file_write_counts)} unique files "
+                    f"(threshold: {threshold}). Is this still within scope?"
+                )
+                result = self._apply_guardrail(fm_config, msg, agent_id)
+                if result:
+                    return result
+                warnings.append(msg)
+
+        # Check bash_commands (cumulative).
+        bc_config = self._thrashing_config.get("bash_commands")
+        if bc_config and tool_name == "Bash":
+            threshold = bc_config.get("threshold", 50)
+            if self._bash_command_count >= threshold:
+                msg = (
+                    f"Executed {self._bash_command_count} bash commands "
+                    f"(threshold: {threshold}). Consider whether this is expected."
+                )
+                result = self._apply_guardrail(bc_config, msg, agent_id)
+                if result:
+                    return result
+                warnings.append(msg)
+
+        if warnings:
+            return {
+                "_guardrail_warning": "[GUARDRAIL] " + " | ".join(warnings),
+            }
+
+        return None
+
+    def _apply_guardrail(self, config: dict, message: str, agent_id: str) -> dict | None:
+        """Apply a guardrail action (hold or warning).
+
+        Returns a result dict for holds, None for warnings (warnings are collected).
+        """
+        action_type = config.get("action", "warning")
+        if action_type == "hold":
+            self._hold = {"reason": message, "ts": time.time()}
+            self._save_state()
+            self._log({
+                "type": "hold", "agent": agent_id,
+                "reason": message,
+            })
+            return {
+                "_guardrail_warning": (
+                    f"[GUARDRAIL HOLD] {message}\n"
+                    f"All actions are now blocked until the hold is cleared.\n"
+                    f"To continue: aorta continue"
+                ),
+            }
+        # Warning — return None, caller collects the message.
+        return None
 
     def _matches_sensitive_path(self, path: str) -> bool:
         """Check if a path matches any sensitive (read-only/no-access) access map entry."""
@@ -735,8 +958,12 @@ def main():
         context = json.loads(sys.stdin.read())
         result = hook.post_tool_use(context, agent=args.agent)
         warning = result.pop("_sensitive_warning", None)
+        guardrail_warning = result.pop("_guardrail_warning", None)
         if warning:
             print(warning, file=sys.stderr, flush=True)
+            sys.exit(2)
+        if guardrail_warning:
+            print(guardrail_warning, file=sys.stderr, flush=True)
             sys.exit(2)
         _respond(result)
 

@@ -80,7 +80,8 @@ def _format_norm_line(norm: dict, pack_name: str | None = None) -> str:
         return f"{ntype}{pack_suffix}"
 
 
-def run_tree(spec: dict, achievements: list[str], packs: list[str]):
+def run_tree(spec: dict, achievements: list[str], packs: list[str],
+             hold: dict | None = None):
     """Render the org spec as a tree with box-drawing characters."""
     org_name = spec.get("organization", "?")
     roles = spec.get("roles", {})
@@ -109,6 +110,8 @@ def run_tree(spec: dict, achievements: list[str], packs: list[str]):
 
     # Determine which sections exist to know what's "last"
     sections: list[str] = []
+    if hold:
+        sections.append("hold")
     if roles:
         sections.append("roles")
     if access:
@@ -127,7 +130,12 @@ def run_tree(spec: dict, achievements: list[str], packs: list[str]):
         branch = "└── " if is_last_section else "├── "
         cont = "    " if is_last_section else "│   "
 
-        if section == "roles":
+        if section == "hold":
+            print(f"{branch}HOLD ACTIVE")
+            reason = hold.get("reason", "unknown") if hold else "unknown"
+            print(f"{cont}└── {reason}")
+
+        elif section == "roles":
             for ri, (role_name, role_def) in enumerate(roles.items()):
                 is_last_role = (ri == len(roles) - 1) and is_last_section
                 if len(roles) > 1:
@@ -237,7 +245,11 @@ def run(args):
         from aorta4llm.governance.compiler import _resolve_includes
         packs = list(spec.get("include", []))
         resolved = _resolve_includes(dict(spec))
-        run_tree(resolved, achievements, packs)
+        hold = None
+        if state_path.exists():
+            state_data = json.loads(state_path.read_text())
+            hold = state_data.get("hold")
+        run_tree(resolved, achievements, packs, hold=hold)
         return
 
     if args.json_output:

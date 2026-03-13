@@ -562,6 +562,104 @@ class TestPostToolUseAchievements:
         assert r2["decision"] == "block"
 
 
+class TestPipedCommandSkipsExitCodeTriggers:
+    """Piped commands have unreliable exit codes — don't trust them for triggers."""
+
+    def _make_hook_with_triggers(self, tmp_path, triggers):
+        spec = {
+            "organization": "pipe_test",
+            "roles": {"agent": {"objectives": [], "capabilities": ["execute_command"]}},
+            "achievement_triggers": triggers,
+        }
+        spec_path = tmp_path / ".aorta" / "spec.yaml"
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        import yaml
+        spec_path.write_text(yaml.dump(spec, sort_keys=False))
+        hook = GovernanceHook(spec_path)
+        hook.register_agent("dev", "agent")
+        return hook
+
+    def test_piped_command_skips_exit_code_trigger(self, tmp_path):
+        """pytest | tail should NOT mark tests_passing even with exit code 0."""
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest tests/ | tail -20"},
+             "tool_response": {"exit_code": 0}},
+            agent="dev",
+        )
+        # Should NOT have achieved tests_passing
+        achievements = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achievements) == 0
+
+    def test_unpiped_command_still_triggers(self, tmp_path):
+        """Regular pytest (no pipe) should still mark tests_passing."""
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest tests/"},
+             "tool_response": {"exit_code": 0}},
+            agent="dev",
+        )
+        achievements = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achievements) == 1
+        assert "tests_passing" in achievements[0]["objectives"]
+
+    def test_redirect_not_treated_as_pipe(self, tmp_path):
+        """2>&1 redirect should not be treated as a pipe."""
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest tests/ 2>&1"},
+             "tool_response": {"exit_code": 0}},
+            agent="dev",
+        )
+        achievements = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achievements) == 1
+
+    def test_or_operator_not_treated_as_pipe(self, tmp_path):
+        """|| (or) should not be treated as a pipe."""
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest tests/ || echo failed"},
+             "tool_response": {"exit_code": 0}},
+            agent="dev",
+        )
+        achievements = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achievements) == 1
+
+    def test_pipe_inside_quotes_not_treated_as_pipe(self, tmp_path):
+        """A | inside quotes should not be treated as a pipe."""
+        triggers = [{"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest tests/ -k 'foo|bar'"},
+             "tool_response": {"exit_code": 0}},
+            agent="dev",
+        )
+        achievements = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achievements) == 1
+
+    def test_trigger_without_exit_code_still_works_on_piped(self, tmp_path):
+        """Triggers that don't require exit_code should still fire for piped commands."""
+        triggers = [{"tool": "Bash", "command_pattern": "deploy", "marks": "deployed"}]
+        hook = self._make_hook_with_triggers(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "deploy.sh | tee log.txt"},
+             "tool_response": {"exit_code": 0}},
+            agent="dev",
+        )
+        achievements = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achievements) == 1
+
+
 class TestGovernanceCommandBlocking:
     """Mutating aorta commands are blocked; read-only ones are allowed."""
 
