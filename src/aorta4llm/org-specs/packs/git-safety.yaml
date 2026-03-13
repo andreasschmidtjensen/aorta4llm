@@ -1,0 +1,9 @@
+norms:
+  - type: forbidden_command
+    role: agent
+    command_pattern: "git commit"
+    severity: soft
+  - type: forbidden_command
+    role: agent
+    command_pattern: "git push"
+    severity: soft

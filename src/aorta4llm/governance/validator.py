@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+from aorta4llm.governance.compiler import PACKS_DIR
+
 VALID_NORM_TYPES = frozenset([
     "scope", "protected", "readonly", "required_before",
     "forbidden_command", "obliged", "forbidden",
@@ -34,6 +36,23 @@ def validate_spec(spec_dict: dict) -> ValidationResult:
 
     if "organization" not in spec_dict:
         result.errors.append("Missing required field: 'organization'")
+
+    # Validate include (policy packs).
+    includes = spec_dict.get("include", [])
+    if includes:
+        if not isinstance(includes, list):
+            result.errors.append("'include' must be a list of pack names")
+        else:
+            for pack_name in includes:
+                if not isinstance(pack_name, str):
+                    result.errors.append(f"include: pack name must be a string, got {type(pack_name).__name__}")
+                else:
+                    pack_path = PACKS_DIR / f"{pack_name}.yaml"
+                    if not pack_path.exists():
+                        result.errors.append(f"include: unknown policy pack '{pack_name}'")
+                    else:
+                        result.summary.append(f"include: policy pack '{pack_name}'")
+
     if "roles" not in spec_dict:
         result.errors.append("Missing required field: 'roles'")
         return result

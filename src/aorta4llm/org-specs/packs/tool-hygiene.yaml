@@ -1,0 +1,21 @@
+norms:
+  - type: forbidden_command
+    role: agent
+    command_pattern: "^\\s*grep\\b"
+    severity: soft
+    message: "Use the Grep tool instead of running grep via Bash"
+  - type: forbidden_command
+    role: agent
+    command_pattern: "^\\s*find\\b"
+    severity: soft
+    message: "Use the Glob tool instead of running find via Bash"
+  - type: forbidden_command
+    role: agent
+    command_pattern: "^\\s*(cat|head|tail)\\b"
+    severity: soft
+    message: "Use the Read tool instead of running cat/head/tail via Bash"
+  - type: forbidden_command
+    role: agent
+    command_pattern: "^\\s*(sed|awk)\\b"
+    severity: soft
+    message: "Use the Edit tool instead of running sed/awk via Bash"

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+PACKS_DIR = Path(__file__).parent.parent / "org-specs" / "packs"
+
 
 @dataclass
 class CompiledSpec:
@@ -23,11 +25,54 @@ def compile_org_spec(yaml_path: str | Path) -> CompiledSpec:
     return compile_spec_dict(spec_dict)
 
 
+def _resolve_includes(spec_dict: dict) -> dict:
+    """Resolve include directives by loading and merging policy packs.
+
+    Pack norms are prepended to user norms. Pack access entries are added
+    but user entries for the same path take precedence.
+    """
+    includes = spec_dict.get("include")
+    if not includes:
+        return spec_dict
+
+    merged_norms: list[dict] = []
+    merged_access: dict[str, str] = {}
+
+    for pack_name in includes:
+        pack_path = PACKS_DIR / f"{pack_name}.yaml"
+        if not pack_path.exists():
+            raise ValueError(f"Unknown policy pack: '{pack_name}'")
+        with open(pack_path) as f:
+            pack = yaml.safe_load(f)
+        merged_norms.extend(pack.get("norms", []))
+        # Pack access: later packs override earlier for same path
+        for path, level in pack.get("access", {}).items():
+            merged_access[path] = level
+
+    # User access overrides pack access for same path
+    user_access = spec_dict.get("access", {})
+    merged_access.update(user_access)
+
+    # Pack norms first, then user norms
+    user_norms = spec_dict.get("norms", [])
+    all_norms = merged_norms + list(user_norms)
+
+    result = dict(spec_dict)
+    result.pop("include", None)
+    if all_norms:
+        result["norms"] = all_norms
+    if merged_access:
+        result["access"] = merged_access
+
+    return result
+
+
 def compile_spec_dict(spec_dict: dict) -> CompiledSpec:
     """Compile an org spec dictionary to structured facts and rules.
 
     This is the core logic, testable without files.
     """
+    spec_dict = _resolve_includes(spec_dict)
     spec = CompiledSpec()
 
     _compile_roles(spec_dict.get("roles", {}), spec)
