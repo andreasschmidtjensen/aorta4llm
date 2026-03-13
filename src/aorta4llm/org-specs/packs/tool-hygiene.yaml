@@ -1,3 +1,4 @@
+# tool-hygiene — Soft-block shell commands that have dedicated Claude Code tools.
 norms:
   - type: forbidden_command
     role: agent

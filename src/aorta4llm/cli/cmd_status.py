@@ -11,6 +11,7 @@ def add_parser(subparsers):
     p.add_argument("--org-spec", default=None, help="Path to org spec YAML (auto-detected from .aorta/)")
     p.add_argument("--events-path", default=None, help="Events JSONL path")
     p.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
+    p.add_argument("--tree", action="store_true", help="Show policy as a tree view")
     p.set_defaults(func=run)
 
 
@@ -18,6 +19,182 @@ def _find_state_path(org_spec_path: str) -> Path:
     """Find the state file for this org spec."""
     from aorta4llm.integration.hooks import _default_state_path
     return _default_state_path(org_spec_path)
+
+
+def _load_pack_norms(pack_name: str) -> list[dict]:
+    """Load norms from a pack, returning them with _pack metadata."""
+    from aorta4llm.cli.cmd_init import TEMPLATES_DIR
+    packs_dir = TEMPLATES_DIR.parent / "packs"
+    pack_path = packs_dir / f"{pack_name}.yaml"
+    if not pack_path.exists():
+        return []
+    import yaml
+    with open(pack_path) as f:
+        pack = yaml.safe_load(f) or {}
+    return pack.get("norms", [])
+
+
+def _norm_signature(norm: dict) -> tuple:
+    """Create a signature for matching norms to their pack origin."""
+    return (
+        norm.get("type", ""),
+        norm.get("role", ""),
+        norm.get("command_pattern", ""),
+        norm.get("severity", ""),
+    )
+
+
+def _build_pack_provenance(packs: list[str]) -> dict[tuple, str]:
+    """Map norm signatures to pack names for provenance display."""
+    provenance: dict[tuple, str] = {}
+    for pack_name in packs:
+        for norm in _load_pack_norms(pack_name):
+            provenance[_norm_signature(norm)] = pack_name
+    return provenance
+
+
+def _format_norm_line(norm: dict, pack_name: str | None = None) -> str:
+    """Format a single norm for tree display."""
+    ntype = norm.get("type", "?")
+    severity = norm.get("severity")
+    tag = f"[{severity}]" if severity else "[hard]"
+    pack_suffix = f"  (from {pack_name})" if pack_name else ""
+
+    if ntype == "forbidden_command":
+        pattern = norm.get("command_pattern", "?")
+        return f"{tag} {pattern}{pack_suffix}"
+    elif ntype == "required_before":
+        pattern = norm.get("command_pattern", "?")
+        requires = norm.get("requires", "?")
+        return f"requires {requires} before {pattern}{pack_suffix}"
+    elif ntype == "scope":
+        paths = ", ".join(norm.get("paths", []))
+        return f"scope: {paths}{pack_suffix}"
+    elif ntype == "protected":
+        paths = ", ".join(norm.get("paths", []))
+        return f"protected: {paths}{pack_suffix}"
+    elif ntype == "readonly":
+        paths = ", ".join(norm.get("paths", []))
+        return f"readonly: {paths}{pack_suffix}"
+    else:
+        return f"{ntype}{pack_suffix}"
+
+
+def run_tree(spec: dict, achievements: list[str], packs: list[str]):
+    """Render the org spec as a tree with box-drawing characters."""
+    org_name = spec.get("organization", "?")
+    roles = spec.get("roles", {})
+    access = spec.get("access", {})
+    norms = spec.get("norms", [])
+    triggers = spec.get("achievement_triggers", [])
+
+    # Build provenance map
+    provenance = _build_pack_provenance(packs)
+
+    # Collect all known objectives from triggers and roles
+    all_objectives: list[str] = []
+    seen = set()
+    for trigger in triggers:
+        obj = trigger.get("marks", "")
+        if obj and obj not in seen:
+            all_objectives.append(obj)
+            seen.add(obj)
+    for role_def in roles.values():
+        for obj in role_def.get("objectives", []):
+            if obj not in seen:
+                all_objectives.append(obj)
+                seen.add(obj)
+
+    achieved_set = set(achievements)
+
+    # Determine which sections exist to know what's "last"
+    sections: list[str] = []
+    if roles:
+        sections.append("roles")
+    if access:
+        sections.append("access")
+    if norms:
+        sections.append("norms")
+    if all_objectives:
+        sections.append("achievements")
+    if packs:
+        sections.append("packs")
+
+    print(org_name)
+
+    for si, section in enumerate(sections):
+        is_last_section = (si == len(sections) - 1)
+        branch = "└── " if is_last_section else "├── "
+        cont = "    " if is_last_section else "│   "
+
+        if section == "roles":
+            for ri, (role_name, role_def) in enumerate(roles.items()):
+                is_last_role = (ri == len(roles) - 1) and is_last_section
+                if len(roles) > 1:
+                    # Multiple roles: show each as a sub-branch
+                    rbranch = "└── " if (ri == len(roles) - 1) else "├── "
+                    if ri == 0:
+                        print(f"{branch}Roles")
+                    rcont = cont + ("    " if ri == len(roles) - 1 else "│   ")
+                    print(f"{cont}{rbranch}Role: {role_name}")
+                    objs = ", ".join(role_def.get("objectives", []))
+                    caps = ", ".join(role_def.get("capabilities", []))
+                    if caps:
+                        print(f"{rcont}├── Objectives: {objs}")
+                        print(f"{rcont}└── Capabilities: {caps}")
+                    else:
+                        print(f"{rcont}└── Objectives: {objs}")
+                else:
+                    objs = ", ".join(role_def.get("objectives", []))
+                    caps = ", ".join(role_def.get("capabilities", []))
+                    print(f"{branch}Role: {role_name}")
+                    if caps:
+                        print(f"{cont}├── Objectives: {objs}")
+                        print(f"{cont}└── Capabilities: {caps}")
+                    else:
+                        print(f"{cont}└── Objectives: {objs}")
+
+        elif section == "access":
+            print(f"{branch}Access")
+            items = list(access.items())
+            for ai, (path, level) in enumerate(items):
+                is_last = ai == len(items) - 1
+                ab = "└── " if is_last else "├── "
+                print(f"{cont}{ab}{path:<20s} {level}")
+
+        elif section == "norms":
+            print(f"{branch}Norms")
+            for ni, norm in enumerate(norms):
+                is_last = ni == len(norms) - 1
+                nb = "└── " if is_last else "├── "
+                pack_name = provenance.get(_norm_signature(norm))
+                line = _format_norm_line(norm, pack_name)
+                print(f"{cont}{nb}{line}")
+
+        elif section == "achievements":
+            print(f"{branch}Achievements")
+            for ai, obj in enumerate(all_objectives):
+                is_last = ai == len(all_objectives) - 1
+                ab = "└── " if is_last else "├── "
+                marker = "●" if obj in achieved_set else "○"
+                # Find trigger details
+                detail = ""
+                for trigger in triggers:
+                    if trigger.get("marks") == obj:
+                        parts = []
+                        if trigger.get("command_pattern"):
+                            parts.append(trigger["command_pattern"])
+                        if trigger.get("exit_code") is not None:
+                            parts.append(f"exit {trigger['exit_code']}")
+                        if trigger.get("reset_on_file_change"):
+                            parts.append("resets on change")
+                        if parts:
+                            detail = f"  ({', '.join(parts)})"
+                        break
+                print(f"{cont}{ab}{marker} {obj}{detail}")
+
+        elif section == "packs":
+            print(f"{branch}Packs: {', '.join(packs)}")
 
 
 def run(args):
@@ -54,6 +231,14 @@ def run(args):
     checks = [e for e in events if e.get("type") == "check"]
     approved = sum(1 for e in checks if e.get("decision") == "approve")
     blocked = sum(1 for e in checks if e.get("decision") == "block")
+
+    if args.tree:
+        # Resolve includes so tree shows effective policy
+        from aorta4llm.governance.compiler import _resolve_includes
+        packs = list(spec.get("include", []))
+        resolved = _resolve_includes(dict(spec))
+        run_tree(resolved, achievements, packs)
+        return
 
     if args.json_output:
         print(json.dumps({

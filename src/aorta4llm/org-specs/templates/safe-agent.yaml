@@ -12,8 +12,7 @@ safe_commands: ["pytest", "git status", "git diff", "git log", "npm test"]
 
 roles:
   agent:
-    objectives:
-      - task_complete
+    objectives: []
     capabilities:
       - read_file
       - write_file

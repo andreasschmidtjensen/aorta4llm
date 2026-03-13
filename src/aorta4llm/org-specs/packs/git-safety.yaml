@@ -1,3 +1,4 @@
+# git-safety — Soft-block git commit and push to require user confirmation.
 norms:
   - type: forbidden_command
     role: agent
