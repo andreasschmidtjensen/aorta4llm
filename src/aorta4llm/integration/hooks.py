@@ -410,9 +410,9 @@ class GovernanceHook:
 
         if not result.permitted:
             if result.severity == "soft":
-                soft_result = self._handle_soft_block(result.reason, params)
-                if result.block_message and soft_result["decision"] == "block":
-                    soft_result["reason"] += f"\n  Hint: {result.block_message}"
+                soft_result = self._handle_soft_block(
+                    result.reason, params, block_message=result.block_message)
+
                 log({
                     "type": "check", "agent": agent_id, "role": role,
                     "action": action, "path": params.get("path", ""),
@@ -641,11 +641,15 @@ class GovernanceHook:
             return True
         return False
 
-    def _handle_soft_block(self, reason: str, params: dict) -> dict:
+    def _handle_soft_block(self, reason: str, params: dict,
+                           block_message: str | None = None) -> dict:
         """Handle a soft (confirmation-required) block.
 
-        On first encounter: block with a message inviting retry.
+        On first encounter: block with a message.
         On retry within the time window: approve (user confirmed).
+
+        If block_message is set (custom message from norm), it replaces
+        the default confirmation prompt.
         """
         cache_key = self._soft_block_key(params)
         now = time.time()
@@ -661,12 +665,16 @@ class GovernanceHook:
         self._soft_block_cache[cache_key] = now
         self._save_state()
         short_reason = _shorten_block_reason(reason)
+        if block_message:
+            msg = f"SOFT BLOCK: {short_reason}\n  {block_message}"
+        else:
+            msg = (
+                f"SOFT BLOCK: {short_reason}\n"
+                f"This action requires user confirmation before proceeding."
+            )
         return {
             "decision": "block",
-            "reason": (
-                f"SOFT BLOCK: {short_reason}\n"
-                f"Ask the user to confirm, then retry the exact same command."
-            ),
+            "reason": msg,
         }
 
     @staticmethod
