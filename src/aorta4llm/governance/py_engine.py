@@ -59,6 +59,10 @@ def _describe_condition(cond: TermType, subst: Substitution) -> str:
         if len(cond.args) >= 2 and isinstance(cond.args[1], Atom):
             return f"command contains '{cond.args[1].value}'"
 
+    if isinstance(cond, Term) and cond.functor == "regex_matches":
+        if len(cond.args) >= 2 and isinstance(cond.args[1], Atom):
+            return f"command matches '{cond.args[1].value}'"
+
     if isinstance(cond, Term) and cond.functor == ",":
         # Conjunction — skip internal helper names (cmd_matches_xxx)
         left = cond.args[0]

@@ -24,7 +24,7 @@ class TestCompilerBlockMessage:
         assert len(bm_facts) == 1
         assert "agent" in bm_facts[0]
         assert "execute_command(Cmd)" in bm_facts[0]
-        assert "str_contains(Cmd, 'grep')" in bm_facts[0]
+        assert "regex_matches(Cmd, 'grep')" in bm_facts[0]
         assert "Use the Grep tool instead" in bm_facts[0]
 
     def test_no_block_message_without_message_field(self):

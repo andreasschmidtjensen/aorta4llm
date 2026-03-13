@@ -185,6 +185,10 @@ class ConditionEvaluator:
         if term.functor == "str_contains" and len(term.args) == 2:
             return self._eval_str_contains(term.args[0], term.args[1], subst)
 
+        # regex_matches(String, Pattern)
+        if term.functor == "regex_matches" and len(term.args) == 2:
+            return self._eval_regex_matches(term.args[0], term.args[1], subst)
+
         # path_matches(Path, Pattern) — fnmatch glob matching
         if term.functor == "path_matches" and len(term.args) == 2:
             return self._eval_path_matches(term.args[0], term.args[1], subst)
@@ -275,6 +279,19 @@ class ConditionEvaluator:
                 return [subst]
             return []
         raise _EvalError("str_contains: requires two ground atoms")
+
+    def _eval_regex_matches(
+        self, string: TermType, pattern: TermType, subst: Substitution
+    ) -> list[Substitution]:
+        """Evaluate regex_matches/2 — regex search."""
+        import re
+        string = apply_subst(string, subst)
+        pattern = apply_subst(pattern, subst)
+        if isinstance(string, Atom) and isinstance(pattern, Atom):
+            if re.search(pattern.value, string.value):
+                return [subst]
+            return []
+        raise _EvalError("regex_matches: requires two ground atoms")
 
     def _eval_path_matches(
         self, path: TermType, pattern: TermType, subst: Substitution

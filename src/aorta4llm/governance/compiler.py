@@ -250,18 +250,19 @@ def _compile_required_before(norm: dict, spec: CompiledSpec) -> None:
         f"cond({role}, forbidden, execute_command(Cmd), false, {condition})"
     )
 
-    # Helper rule: matches when command contains the pattern as a substring
+    # Helper rule: matches when command matches the pattern (regex)
     quoted = f"'{command_pattern}'"
     spec.rules.append(
-        f"{helper}(Cmd) :- str_contains(Cmd, {quoted})."
+        f"{helper}(Cmd) :- regex_matches(Cmd, {quoted})."
     )
 
 
 def _compile_forbidden_command(norm: dict, spec: CompiledSpec) -> None:
     """Compile forbidden_command shorthand.
 
-    Forbids execute_command(Cmd) when the command contains `command_pattern`
-    as a substring. Uses str_contains/2 for matching.
+    Forbids execute_command(Cmd) when the command matches `command_pattern`.
+    Uses regex_matches/2 for matching (supports both simple substrings
+    and full regex patterns like ^\\s*grep\\b).
     Supports severity: soft for confirmation-required blocks.
     """
     role = norm["role"]
@@ -269,17 +270,17 @@ def _compile_forbidden_command(norm: dict, spec: CompiledSpec) -> None:
     quoted = f"'{command_pattern}'"
 
     spec.facts.append(
-        f"cond({role}, forbidden, execute_command(Cmd), false, str_contains(Cmd, {quoted}))"
+        f"cond({role}, forbidden, execute_command(Cmd), false, regex_matches(Cmd, {quoted}))"
     )
 
     if norm.get("severity") == "soft":
-        spec.facts.append(f"soft_norm({role}, execute_command(Cmd), str_contains(Cmd, {quoted}))")
+        spec.facts.append(f"soft_norm({role}, execute_command(Cmd), regex_matches(Cmd, {quoted}))")
 
     message = norm.get("message")
     if message:
         escaped = message.replace("'", "\\'")
         spec.facts.append(
-            f"block_message({role}, execute_command(Cmd), str_contains(Cmd, {quoted}), '{escaped}')"
+            f"block_message({role}, execute_command(Cmd), regex_matches(Cmd, {quoted}), '{escaped}')"
         )
 
 
