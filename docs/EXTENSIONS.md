@@ -15,8 +15,10 @@ The AORTA framework (Jensen, 2015) defines a much richer set of organizational c
 | PreToolUse | Block/soft-block commands | Prohibition + severity |
 | PreToolUse | Require achievement before command | Obligation (required_before) |
 | PreToolUse | Bash write-path analysis | Prohibition (derived) |
+| PreToolUse | Block all actions when held | Hold (hard gate) |
 | PostToolUse | Achievement triggers | Obligation fulfillment |
 | PostToolUse | Sensitive content warning | Prompt-level nudge |
+| PostToolUse | Guardrails (failure rate, budgets) | Monitoring + sanctions |
 | System prompt | Obligation injection | OG phase (partial) |
 
 ---
@@ -29,9 +31,9 @@ Before adding extensions, the codebase needs one structural change:
 
 Source moved to `src/aorta4llm/`. All imports use `aorta4llm.*` prefix. Entry point unchanged (`aorta` binary).
 
-### Hook state extensibility
+### ~~Hook state extensibility~~ (done)
 
-The current `GovernanceHook` stores state in a flat dict (`events`, `soft_blocks`, `exceptions`). Several extensions need per-session counters (write counts per file, command retry counts, directory spread). The state model needs a lightweight extension — likely a `session_counters` dict in state.json that resets on `aorta reset`.
+State model extended for guardrails: `action_ring` (ring buffer for failure rate), `hold` (active hold), `file_write_counts` (per-file write counts), `bash_command_count` (cumulative). All reset by `aorta continue`.
 
 ---
 
@@ -67,23 +69,23 @@ This pattern composes well: post-write checks create obligations, obligation gat
 
 ---
 
-## Extension 2: Behavioral budgets
+## Extension 2: Behavioral budgets (done)
 
 **Problem:** A confused agent can thrash — rewriting files repeatedly, running dozens of failing commands, modifying files across the repo.
 
 **Concern:** LLM behavior is inherently variable. Four edits vs. one edit for the same logical change. A `for` loop vs. individual commands. Hard thresholds will produce false positives.
 
-**Approach:** Opt-in budgets with generous defaults. When exceeded, place the agent on **hold** (same mechanism as thrashing detection, Extension 4). The user runs `aorta continue` to resume after reviewing.
+Implemented as part of the unified guardrails system (see Extension 4). Each budget check (`files_modified`, `bash_commands`) is configurable as either `hold` (hard gate) or `warning` (stderr nudge). Counters reset when user runs `aorta continue`.
 
 ```yaml
-budgets:
-  max_files_modified: 15
-  max_bash_commands: 50
+guardrails:
+  files_modified:
+    threshold: 15
+    action: warning       # or hold
+  bash_commands:
+    threshold: 50
+    action: warning
 ```
-
-Unlike thrashing (which detects failure patterns), budgets cap the total blast radius regardless of success/failure. A budget hold means "you've touched a lot of things — let's check in."
-
-Should always be opt-in. Not appropriate for all workflows (e.g., large refactors legitimately touch many files).
 
 ---
 
@@ -97,47 +99,39 @@ Should always be opt-in. Not appropriate for all workflows (e.g., large refactor
 
 ---
 
-## Extension 4: Thrashing detection
+## Extension 4: Thrashing detection (done)
 
 **Problem:** Agent writes file, tests fail, rewrites same file, tests fail again — loop. Or retries a failing bash command repeatedly. Or flails through a sequence of wrong approaches, alternating between failures and irrelevant actions. The common thread is a high failure rate, not necessarily consecutive failures.
 
 **This is the clearest signal.** Unlike budgets (Extension 2), a high failure rate is unambiguous — an agent that fails 50% of its recent commands is lost, regardless of whether the failures are consecutive.
 
-**Approach: Failure rate over a moving window.** Track the last N commands and compute the failure percentage. This catches patterns that consecutive-failure detection misses:
-
-- **Consecutive:** `fail, fail, fail` — obvious, but the simplest case
-- **Interleaved:** `fail, edit, fail, edit, fail` — agent alternates between failing commands and attempted fixes, never triggering a consecutive-failure check
-- **Scattered:** `fail, read, read, fail, edit, fail` — agent is lost but doing other things between failures
-
-A moving window catches all three:
+Implemented as part of a unified guardrails system alongside behavioral budgets (#2). All checks share one config section and each is independently configurable as `hold` (hard gate, user clears with `aorta continue`) or `warning` (stderr nudge).
 
 ```yaml
-thrashing_detection:
-  window_size: 10          # look at last 10 commands
-  failure_threshold: 0.5   # 50% failure rate triggers
-  per_file_rewrites: 3     # same file written N times
+guardrails:
+  window_size: 10
+  failure_rate:
+    threshold: 0.5
+    action: hold          # high failure rate = agent is stuck
+  per_file_rewrites:
+    threshold: 3
+    action: hold          # same file rewritten N times = thrashing
+  files_modified:
+    threshold: 15
+    action: warning       # budget: total unique files
+  bash_commands:
+    threshold: 50
+    action: warning       # budget: total bash commands
 ```
 
-**What counts as a failure:**
-- Bash command with non-zero exit code
-- Any blocked action (hard or soft)
-- Same file written more than `per_file_rewrites` times (regardless of exit code — rewriting the same file repeatedly is thrashing even if each write "succeeds")
+**How it works:**
+- PostToolUse tracks actions in a ring buffer (for failure rate) and cumulative counters (for budgets)
+- When a threshold is breached, the configured action fires: `hold` sets a hard gate in state.json that PreToolUse checks before any other check; `warning` emits a stderr message like the sensitive content notice
+- `aorta continue` clears the hold AND resets all counters, so budgets become periodic checkpoints rather than one-time caps
+- `aorta status --tree` shows active holds
+- Agents cannot clear holds (blocked from running `aorta` commands)
 
-**When triggered:** Place the agent on **hold** — a hard gate that blocks all writes until the user intervenes. Unlike soft blocks (which the agent can bypass by retrying), holds can only be cleared by the user running `aorta continue` from their terminal. Since agents are blocked from running `aorta` commands, this is genuinely user-only.
-
-The hold mechanism:
-1. Thrashing detected → engine sets `hold: thrashing_detected` in state.json
-2. PreToolUse checks for active holds before any other check — if held, block with message: "Agent is on hold (thrashing detected: 6/10 recent actions failed). Run `aorta continue` to resume."
-3. User reviews the situation, then runs `aorta continue` to clear the hold
-4. Hold is cleared, ring buffer is reset, agent resumes
-
-This is distinct from soft blocks:
-- **Soft blocks**: low-friction nudge for known-risky actions (git commit, shell tools). Agent can proceed — acceptable because the action itself may be intentional.
-- **Holds**: the agent is stuck or out of bounds. Hard gate, user-only clearable. Used for thrashing, budget violations, and other "stop and think" situations.
-
-**Implementation:** PostToolUse appends each command result to a ring buffer in state.json's `session_counters`. The buffer stores `{tool, path, success}` for the last `window_size` actions. On each append, compute failure rate and check per-file rewrite counts. PreToolUse checks for active holds before processing any action.
-
-`aorta continue` CLI command: clears the hold, resets the ring buffer, logs a governance event. Also shown in `aorta status --tree` when active.
+**Also fixed:** Piped commands (`pytest | tail -20`) have unreliable exit codes (shell reports the last command's exit code). Achievement triggers that depend on `exit_code` now skip piped commands.
 
 ---
 
@@ -562,23 +556,22 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | ~~0~~ | ~~`src/` layout refactor~~ | done |
 | ~~1~~ | ~~Custom block messages (#11)~~ | done |
 | ~~2~~ | ~~Policy packs (#12)~~ | done |
-| 2a | `aorta include` CLI command (#12) | #2 (manages pack includes without editing YAML) |
-| 3 | Policy visualization, level 1: tree (#13) | #2 (visualizes packs) |
-| 4 | Richer triggers (#8) | — |
-| 5 | Obligation gate (`all_obligations_fulfilled`) | — |
-| 6 | Counts-as rules (#6) | #4 |
-| 7 | Thrashing detection (#4) | #5 (creates obligations) |
-| 8 | Post-write content validation (#1) | #5 (creates obligations) |
-| 9 | Sanctions (#7) | #5 |
-| 10 | Workflow phases (#10) | #6, #4 |
-| 11 | Scope drift (#3) | #5 |
+| ~~2a~~ | ~~`aorta include` CLI command (#12)~~ | done |
+| ~~3~~ | ~~Policy visualization, level 1: tree (#13)~~ | done |
+| ~~4~~ | ~~Thrashing detection + behavioral budgets (#4, #2)~~ | done — unified guardrails system |
+| 5 | Richer triggers (#8) | — |
+| 6 | Obligation gate (`all_obligations_fulfilled`) | — |
+| 7 | Counts-as rules (#6) | #5 |
+| 8 | Post-write content validation (#1) | #6 (creates obligations) |
+| 9 | Sanctions (#7) | #6 |
+| 10 | Workflow phases (#10) | #7, #5 |
+| 11 | Scope drift (#3) | #6 |
 | 12 | Tool output redaction PoC (#5) | — |
-| 13 | Behavioral budgets (#2) | #9 (sanctions) |
-| 14 | Checkpoint/rollback (#9) | #4 (just uses existing required_before) |
-| 15 | Policy visualization, level 2: dashboard (#13) | #3 |
-| 16 | Policy visualization, level 3: graph (#13) | #6 (needs counts-as/obligations to visualize) |
+| 13 | Checkpoint/rollback (#9) | #5 (just uses existing required_before) |
+| 14 | Policy visualization, level 2: dashboard (#13) | #3 |
+| 15 | Policy visualization, level 3: graph (#13) | #7 (needs counts-as/obligations to visualize) |
 
-The first three priorities (#11, #12, #13-L1) deliver immediate user-facing value: better block messages, less configuration boilerplate, and a way to verify the result. The obligation gate (#5) is the lynchpin for the engine extensions that follow. Policy packs (#12) are the usability counterpart — without them, the extensions create configuration overhead that discourages adoption.
+The first four priorities (#11, #12, #13-L1, #4+#2) are done. They deliver immediate user-facing value: better block messages, less configuration boilerplate, a way to verify the result, and automated detection of stuck agents. The obligation gate (#6) is the lynchpin for the engine extensions that follow.
 
 ---
 
@@ -592,13 +585,13 @@ The first three priorities (#11, #12, #13-L1) deliver immediate user-facing valu
 
 ### What needs attention
 - ~~**`src/` layout**: Required for dogfooding and cleaner scope management~~ (done)
-- **Hook state**: Needs a `session_counters` dict for tracking write counts, command retries, directory spread per session
+- ~~**Hook state**: Needs a `session_counters` dict for tracking write counts, command retries, directory spread per session~~ (done — guardrails state in state.json)
 - **Obligation lifecycle**: The engine supports obligations but the hook layer doesn't create them dynamically. Need a path from PostToolUse checks → obligation creation → obligation gate enforcement
 - **`counts_as` evaluation**: New evaluator capability — after each state change, check if any counts-as rules now fire. Should be a new phase between NC and OG, or part of NC.
 - **`all_obligations_fulfilled` predicate**: New built-in predicate for the evaluator. Checks that no `norm(Agent, Role, obliged, _, _)` facts exist.
 
 ### Recommended refactoring before extensions
-1. Move to `src/` layout (enables dogfooding)
-2. Add `session_counters` to hook state model
+1. ~~Move to `src/` layout (enables dogfooding)~~ (done)
+2. ~~Add `session_counters` to hook state model~~ (done — guardrails state)
 3. Add a `create_obligation` method to GovernanceService (currently obligations only come from spec compilation, not runtime events)
 4. Add `all_obligations_fulfilled` as a built-in evaluator predicate
