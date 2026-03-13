@@ -91,16 +91,34 @@ If implemented, should be opt-in with generous defaults and always soft-block se
 
 ## Extension 4: Thrashing detection
 
-**Problem:** Agent writes file, tests fail, rewrites same file, tests fail again — loop. Or retries a failing bash command repeatedly.
+**Problem:** Agent writes file, tests fail, rewrites same file, tests fail again — loop. Or retries a failing bash command repeatedly. Or flails through a sequence of wrong approaches, alternating between failures and irrelevant actions. The common thread is a high failure rate, not necessarily consecutive failures.
 
-**This is the clearest signal.** Unlike budgets (Extension 2), repeated failure is unambiguous — a bash command failing 3 times with the same exit code is never intentional.
+**This is the clearest signal.** Unlike budgets (Extension 2), a high failure rate is unambiguous — an agent that fails 50% of its recent commands is lost, regardless of whether the failures are consecutive.
 
-**Approach:**
-- Track write count per file path in session state
-- Track bash command retries (same command prefix + same exit code)
-- On threshold, trigger obligation: "This command has failed N times. Ask the user for help before retrying."
+**Approach: Failure rate over a moving window.** Track the last N commands and compute the failure percentage. This catches patterns that consecutive-failure detection misses:
 
-The obligation gate (Extension 1) ensures the agent can't just ignore this — it must resolve the obligation before gated commands proceed.
+- **Consecutive:** `fail, fail, fail` — obvious, but the simplest case
+- **Interleaved:** `fail, edit, fail, edit, fail` — agent alternates between failing commands and attempted fixes, never triggering a consecutive-failure check
+- **Scattered:** `fail, read, read, fail, edit, fail` — agent is lost but doing other things between failures
+
+A moving window catches all three:
+
+```yaml
+thrashing_detection:
+  window_size: 10          # look at last 10 commands
+  failure_threshold: 0.5   # 50% failure rate triggers
+  per_file_rewrites: 3     # same file written N times
+  severity: soft
+```
+
+**What counts as a failure:**
+- Bash command with non-zero exit code
+- Any blocked action (hard or soft)
+- Same file written more than `per_file_rewrites` times (regardless of exit code — rewriting the same file repeatedly is thrashing even if each write "succeeds")
+
+**When triggered:** Create an obligation to ask the user for help. The obligation gate (Extension 1) ensures the agent can't just ignore this — it must resolve the obligation before gated commands proceed.
+
+**Implementation:** PostToolUse appends each command result to a ring buffer in `session_counters`. The buffer stores `{tool, action, success: bool}` for the last `window_size` actions. On each append, compute failure rate and check threshold. No need to persist across sessions — thrashing is a session-level signal.
 
 ---
 
@@ -290,24 +308,257 @@ The key new mechanism is the **obligation gate** — a `required_before` variant
 
 ---
 
+## Extension 11: Custom block messages for tool redirection
+
+**Problem:** When a `forbidden_command` norm blocks or soft-blocks a Bash command, the agent sees a generic block reason derived from the term representation (e.g., `execute_command(Cmd) is forbidden`). This tells the agent *what* was blocked but not *why* or *what to do instead*. The agent may retry, work around, or just give up.
+
+**Motivating example:** Claude Code has dedicated tools (Grep, Glob, Read, Edit, Write) that are better than their Bash equivalents (`grep`, `find`, `cat`, `sed`). An org spec can forbid these Bash commands, but without guidance the agent doesn't know what to use instead. A custom message turns a block into a redirect:
+
+```yaml
+norms:
+  - type: forbidden_command
+    role: agent
+    command_pattern: "^\\s*grep\\b"
+    severity: soft
+    message: "Use the Grep tool instead of running grep via Bash"
+
+  - type: forbidden_command
+    role: agent
+    command_pattern: "^\\s*find\\b"
+    severity: soft
+    message: "Use the Glob tool instead of running find via Bash"
+
+  - type: forbidden_command
+    role: agent
+    command_pattern: "^\\s*(cat|head|tail)\\b"
+    severity: soft
+    message: "Use the Read tool instead of running cat/head/tail via Bash"
+
+  - type: forbidden_command
+    role: agent
+    command_pattern: "^\\s*(sed|awk)\\b"
+    severity: soft
+    message: "Use the Edit tool instead of running sed/awk via Bash"
+```
+
+**Approach:** Add an optional `message` field to all norm types. When present, the message is included in the block reason returned to the agent via the hook's stderr output. The compiler stores messages as additional facts:
+
+```yaml
+# Compiled fact (strawman)
+block_message(agent, execute_command(Cmd), str_contains(Cmd, 'grep'), 'Use the Grep tool instead')
+```
+
+The hook layer looks up `block_message` facts when a block fires and appends the message to the governance notice.
+
+**Current state:** `_compile_forbidden_command` in [compiler.py](../src/aorta4llm/governance/compiler.py) has no `message` field support. Block reasons are auto-generated from the term representation. Adding `message` support requires:
+1. Compiler: emit `block_message` facts when `message` is present
+2. Validator: accept `message` as an optional field on norm types
+3. Hook layer: look up and include messages in block notices
+
+**Scope:** While the motivating example is tool redirection, custom messages are useful for any norm. A `protected` path block could say "This file contains production credentials — use the staging config instead." A `required_before` block could say "Run the linter first."
+
+**Pattern design for tool redirection.** A naive `\bgrep\b` pattern matches `grep` anywhere in the command — including legitimate pipeline usage like `git log | grep feat | sort`, where the Grep tool can't substitute. To reduce false positives, patterns should match only when the tool is the *primary command*, not a pipeline filter:
+
+```yaml
+# Matches "grep -r pattern src/" but not "git log | grep feat"
+command_pattern: "^\\s*grep\\b"
+```
+
+Matching the first token handles the 90% case. Grep-as-pipeline-filter is a legitimate Bash use; grep-as-primary-command almost always has a built-in equivalent. The same logic applies to `find`, `cat`, `sed`, etc. — when they appear after `|`, the agent is likely using them as part of a larger workflow that has no single-tool equivalent.
+
+**Determinism gain:** The redirect itself is deterministic — the engine decides both that the action is blocked and what the agent should do instead. No LLM reasoning needed to figure out the alternative.
+
+---
+
+## Extension 12: Policy packs and configuration management
+
+**Problem:** As extensions are added, the org spec YAML grows. A project that wants tool hygiene, secret protection, thrashing detection, and scope drift ends up with 50+ lines of boilerplate norms. Most of this is generic — not project-specific. Configuration becomes overwhelming and error-prone.
+
+**Approach: Built-in policy packs.** Ship curated norm bundles with the engine. Users reference them by name:
+
+```yaml
+organization: my_project
+include:
+  - tool-hygiene       # soft-blocks grep/find/cat/sed → built-in tools
+  - secret-protection   # no-access for .env, *.key, *.pem + secret patterns
+  - thrash-guard        # thrashing + budget detection with sane defaults
+
+# Project-specific config only
+access:
+  src/:    read-write
+  tests/:  read-write
+
+norms:
+  - type: forbidden_command
+    role: agent
+    command_pattern: "git push"
+    severity: soft
+```
+
+Packs expand to concrete norms at compile time. The compiler resolves `include` before processing norms, merging pack norms with user norms. User norms take precedence when there's a conflict.
+
+**Example packs shipped with the engine:**
+
+| Pack | What it includes |
+|------|-----------------|
+| `tool-hygiene` | Soft-blocks Bash equivalents of built-in tools with redirect messages (#11) |
+| `secret-protection` | `no-access` for common secret files, post-write secret pattern checks (#1) |
+| `thrash-guard` | Thrashing detection (#4) + behavioral budgets (#2) with generous defaults |
+| `git-safety` | Soft-blocks commit/push, requires test pass before commit |
+| `scope-guard` | Scope drift detection (#3) with configurable directory spread |
+
+**Overrides.** Users can override individual settings from a pack:
+
+```yaml
+include:
+  - thrash-guard
+
+# Override the default max_rewrites from the pack
+thrashing_detection:
+  max_rewrites_per_file: 5   # default in pack is 3
+```
+
+**Layered files.** Multiple YAML files in `.aorta/` that merge together. A base policy shared across repos, plus project-specific overrides:
+
+```yaml
+# .aorta/base.yaml (shared, perhaps from a team template)
+include:
+  - tool-hygiene
+  - secret-protection
+
+# .aorta/project.yaml (project-specific)
+extends: base.yaml
+access:
+  src/:    read-write
+```
+
+**`aorta policy` command.** Shows the effective merged configuration — all packs expanded, all layers merged, all norms listed with their source. Answers "what's actually active?" without reading multiple files:
+
+```
+$ aorta policy
+Source: pack:tool-hygiene
+  [soft] forbidden_command: \bgrep\b → "Use the Grep tool instead"
+  [soft] forbidden_command: \bfind\b → "Use the Glob tool instead"
+
+Source: pack:secret-protection
+  [hard] no-access: .env, .env.local, *.key, *.pem
+
+Source: .aorta/project.yaml
+  [rw]   access: src/, tests/
+  [soft] forbidden_command: git push
+```
+
+Extending `aorta explain` to show "this norm came from pack X" or "this norm was overridden by file Y" closes the loop on debuggability.
+
+**Implementation:**
+1. Packs are YAML files shipped in `org-specs/packs/` alongside existing templates
+2. Compiler resolves `include` first, loading and merging pack YAML before compiling
+3. Merge strategy: user norms append to pack norms; user access overrides pack access for the same path; user settings override pack settings for the same key
+4. `aorta policy` walks the merge chain and prints effective config with provenance
+
+**Relationship to templates:** Templates (`aorta init --template`) scaffold a starting config. Packs are referenced at runtime and always resolve to their latest version. A template might *include* packs in the generated YAML, but packs and templates are independent concepts.
+
+---
+
+## Extension 13: Policy visualization (TUI)
+
+**Problem:** As org specs grow — access maps, norms, achievements, packs, counts-as rules — understanding the effective policy requires reading YAML and mentally compiling it. Users need a quick way to see what's active, what's blocking what, and where things stand.
+
+**Three levels of visualization, each building on the last:**
+
+### Level 1: Tree view (`aorta status --tree`)
+
+Static snapshot of the compiled policy. No dependencies, just box-drawing characters:
+
+```
+safe_agent
+├── Role: agent
+│   ├── Objectives: task_complete
+│   └── Capabilities: read, write, execute
+├── Access
+│   ├── src/        read-write
+│   ├── tests/      read-write
+│   ├── config/     read-only
+│   └── .env        no-access
+├── Norms
+│   ├── [soft] git commit        ← forbidden_command
+│   ├── [soft] git push          ← forbidden_command
+│   ├── [hard] write outside scope
+│   └── [hard] requires tests_passing before git commit
+├── Achievements
+│   ├── ○ tests_passing    (pytest exit 0, resets on file change)
+│   └── ○ task_complete
+└── Packs: tool-hygiene, secret-protection
+```
+
+Filled `●` for achieved, empty `○` for not-yet-achieved. Reads achievement state from `.aorta/state.json`. This is the natural output for `aorta policy` (#12) — same data, structured as a tree rather than a flat list.
+
+### Level 2: Live dashboard (`aorta watch --dashboard`)
+
+Extends the existing `aorta watch` event stream into a split-panel view:
+
+```
+┌─ Policy ─────────────────────┬─ Events (live) ──────────────────┐
+│ Access                       │ 14:02:01 Write src/app.py  ALLOW │
+│  src/       rw               │ 14:02:03 Read .env         BLOCK │
+│  tests/     rw               │ 14:02:05 Bash: pytest      ALLOW │
+│  .env       no-access        │ 14:02:05 ● tests_passing         │
+│                              │ 14:02:08 Bash: git commit  ALLOW │
+│ Norms                        │ 14:02:10 Write src/app.py  ALLOW │
+│  [soft] git commit           │ 14:02:10 ○ tests_passing (reset) │
+│  [soft] git push             │                                   │
+├─ Achievements ───────────────┤                                   │
+│ ● tests_passing              │                                   │
+│ ○ task_complete              │                                   │
+└──────────────────────────────┴───────────────────────────────────┘
+```
+
+Left panel is the static policy (updates when achievements change). Right panel is the live event stream. Achievements toggle between `●`/`○` in real-time as triggers fire and resets occur.
+
+### Level 3: Dependency graph (`aorta status --graph`)
+
+For complex policies with counts-as rules (#6), obligation chains, and workflow phases (#10). Shows causal relationships:
+
+```
+tests_passing ──┐
+                ├──→ ready_to_merge ──→ unlocks: git push
+code_reviewed ──┘
+
+model_created ──→ obliged: migration_created ──→ gates: git commit
+```
+
+Answers "why is my commit blocked?" by tracing the chain visually. Most useful for debugging, less for day-to-day monitoring.
+
+**Implementation:**
+- Level 1: Pretty-print the compiled spec + state. No new dependencies — box-drawing characters and terminal width detection. Ships alongside `aorta policy` (#12).
+- Level 2: Extend `aorta watch` with a layout engine. Could use `curses` (stdlib) or keep it simple with ANSI escape codes for positioning.
+- Level 3: ASCII graph layout. Only valuable once counts-as and obligation gates exist.
+
+---
+
 ## Implementation order
 
 | Priority | Extension | Depends on |
 |----------|-----------|------------|
 | ~~0~~ | ~~`src/` layout refactor~~ | done |
-| 1 | Richer triggers (#8) | — |
-| 2 | Obligation gate (`all_obligations_fulfilled`) | — |
-| 3 | Counts-as rules (#6) | #8 |
-| 4 | Thrashing detection (#4) | #2 (creates obligations) |
-| 5 | Post-write content validation (#1) | #2 (creates obligations) |
-| 6 | Sanctions (#7) | #2 |
-| 7 | Workflow phases (#10) | #6, #8 |
-| 8 | Scope drift (#3) | #2 |
-| 9 | Tool output redaction PoC (#5) | — |
-| 10 | Behavioral budgets (#2) | #7 (sanctions) |
-| 11 | Checkpoint/rollback (#9) | #8 (just uses existing required_before) |
+| 1 | Custom block messages (#11) | — |
+| 2 | Policy packs (#12) | #11 (tool-hygiene pack uses custom messages) |
+| 3 | Policy visualization, level 1: tree (#13) | #12 (visualizes packs) |
+| 4 | Richer triggers (#8) | — |
+| 5 | Obligation gate (`all_obligations_fulfilled`) | — |
+| 6 | Counts-as rules (#6) | #4 |
+| 7 | Thrashing detection (#4) | #5 (creates obligations) |
+| 8 | Post-write content validation (#1) | #5 (creates obligations) |
+| 9 | Sanctions (#7) | #5 |
+| 10 | Workflow phases (#10) | #6, #4 |
+| 11 | Scope drift (#3) | #5 |
+| 12 | Tool output redaction PoC (#5) | — |
+| 13 | Behavioral budgets (#2) | #9 (sanctions) |
+| 14 | Checkpoint/rollback (#9) | #4 (just uses existing required_before) |
+| 15 | Policy visualization, level 2: dashboard (#13) | #3 |
+| 16 | Policy visualization, level 3: graph (#13) | #6 (needs counts-as/obligations to visualize) |
 
-The obligation gate (#2) is the lynchpin — most extensions create obligations, and the gate is what makes them enforceable.
+The first three priorities (#11, #12, #13-L1) deliver immediate user-facing value: better block messages, less configuration boilerplate, and a way to verify the result. The obligation gate (#5) is the lynchpin for the engine extensions that follow. Policy packs (#12) are the usability counterpart — without them, the extensions create configuration overhead that discourages adoption.
 
 ---
 
@@ -320,7 +571,7 @@ The obligation gate (#2) is the lynchpin — most extensions create obligations,
 - Event sourcing provides a natural place to add session counters
 
 ### What needs attention
-- **`src/` layout**: Required for dogfooding and cleaner scope management
+- ~~**`src/` layout**: Required for dogfooding and cleaner scope management~~ (done)
 - **Hook state**: Needs a `session_counters` dict for tracking write counts, command retries, directory spread per session
 - **Obligation lifecycle**: The engine supports obligations but the hook layer doesn't create them dynamically. Need a path from PostToolUse checks → obligation creation → obligation gate enforcement
 - **`counts_as` evaluation**: New evaluator capability — after each state change, check if any counts-as rules now fire. Should be a new phase between NC and OG, or part of NC.
