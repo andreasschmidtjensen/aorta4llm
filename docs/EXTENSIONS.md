@@ -541,9 +541,10 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | Priority | Extension | Depends on |
 |----------|-----------|------------|
 | ~~0~~ | ~~`src/` layout refactor~~ | done |
-| 1 | Custom block messages (#11) | — |
-| 2 | Policy packs (#12) | #11 (tool-hygiene pack uses custom messages) |
-| 3 | Policy visualization, level 1: tree (#13) | #12 (visualizes packs) |
+| ~~1~~ | ~~Custom block messages (#11)~~ | done |
+| ~~2~~ | ~~Policy packs (#12)~~ | done |
+| 2a | `aorta include` CLI command (#12) | #2 (manages pack includes without editing YAML) |
+| 3 | Policy visualization, level 1: tree (#13) | #2 (visualizes packs) |
 | 4 | Richer triggers (#8) | — |
 | 5 | Obligation gate (`all_obligations_fulfilled`) | — |
 | 6 | Counts-as rules (#6) | #4 |
