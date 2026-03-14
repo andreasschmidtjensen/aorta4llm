@@ -175,6 +175,11 @@ The engine evaluates counts-as rules after each state change. When all `when` co
 
 State transitions are logic-driven, not LLM-decided.
 
+**Done.** Implemented in `hooks.py` (`_evaluate_counts_as`), validated in `validator.py`, formatted in `cmd_watch.py`. Key behaviors:
+- Cascading evaluation: A+B→C, C→D fires in a single loop until stable.
+- Cascading invalidation: when `reset_on_file_change` clears a dependency, derived counts-as marks are also cleared recursively.
+- Deduplication: marks and obligations are only created once; re-firing triggers after reset correctly re-creates them.
+
 ---
 
 ## Extension 7: Sanctions and violation cascades
@@ -566,7 +571,7 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | ~~5~~ | ~~Richer triggers (#8)~~ | done |
 | ~~6~~ | ~~Obligation gate (`all_obligations_fulfilled`)~~ | done |
 | ~~6a~~ | ~~`aorta status` shows active obligations~~ | done |
-| 7 | Counts-as rules (#6) | #5 |
+| ~~7~~ | ~~Counts-as rules (#6)~~ | done |
 | 8 | Post-write content validation (#1) | #6 (creates obligations) |
 | 9 | Sanctions (#7) | #6 |
 | 10 | Workflow phases (#10) | #7, #5 |
@@ -577,7 +582,7 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | 15 | Policy visualization, level 2: dashboard (#13) | #3 |
 | 16 | Policy visualization, level 3: graph (#13) | #7 (needs counts-as/obligations to visualize) |
 
-The first six priorities (#11, #12, #13-L1, #4+#2, #8, #6) are done. The obligation gate adds `all_obligations_fulfilled` as a built-in predicate, `create_obligation` on the service and hook layers, and event-sourced persistence. `aorta status` does not yet show active obligations (#6a). The counts-as rules (#7) are next. The replay harness (#14) can be built at any time — it has no dependencies on other extensions and serves as a validation tool for all of them.
+The first eight priorities (#11, #12, #13-L1, #4+#2, #8, #6, #6a, #7) are done. Counts-as rules evaluate after each achievement change in `post_tool_use`, cascading until stable (A+B→C, C→D). Rules can `marks` new achievements or `creates_obligation` with optional deadline. Validator supports `counts_as` section. The replay harness (#14) can be built at any time — it has no dependencies on other extensions and serves as a validation tool for all of them.
 
 ---
 

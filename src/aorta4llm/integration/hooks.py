@@ -259,6 +259,7 @@ class GovernanceHook:
         self._service = GovernanceService(self._org_spec_path)
         extras = self._load_spec_extras(self._org_spec_path)
         self._triggers = extras[0]
+        self._counts_as: list[dict] = extras[6]
         self._bash_analysis = extras[1]
         self._safe_commands = extras[2]
         self._events: list[dict] = []
@@ -278,8 +279,8 @@ class GovernanceHook:
         self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
 
-    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict]:
-        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, sensitive paths, and guardrails."""
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict, list[dict]]:
+        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, sensitive paths, guardrails, and counts_as."""
         try:
             with open(org_spec_path) as f:
                 spec = yaml.safe_load(f)
@@ -298,9 +299,10 @@ class GovernanceHook:
                 window,
                 sensitive,
                 guardrails,
+                spec.get("counts_as", []),
             )
         except Exception:
-            return [], False, frozenset(), 60, frozenset(), {}
+            return [], False, frozenset(), 60, frozenset(), {}, []
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state."""
@@ -548,6 +550,7 @@ class GovernanceHook:
             "type": "check", "agent": agent_id, "role": role,
             "action": action, "path": params.get("path", ""),
             "decision": "approve",
+            **({"command": params["command"]} if "command" in params else {}),
         })
 
         # Phase 2: LLM-based Bash command analysis.
@@ -596,6 +599,8 @@ class GovernanceHook:
                     self._save_state()
                     log({"type": "achievement_reset", "agent": agent_id,
                          "mark": mark, "reason": "file changed"})
+                    self._invalidate_counts_as_dependents(mark)
+            self._save_state()
 
         return {"decision": "approve"}
 
@@ -702,7 +707,12 @@ class GovernanceHook:
                         {"type": "achievement_cleared", "agent": agent_id,
                          "role": role, "mark": mark, "reason": "negative trigger"},
                     )
+                    self._invalidate_counts_as_dependents(mark)
             self._save_state()
+
+        # Evaluate counts-as rules after any achievement changes.
+        if achieved or cleared:
+            self._evaluate_counts_as(agent_id, role)
 
         # Guardrails tracking.
         result = self._check_guardrails(context, agent_id)
@@ -710,6 +720,89 @@ class GovernanceHook:
             return result
 
         return {"status": "ok"}
+
+    def _get_achieved_set(self) -> set[str]:
+        """Build the set of currently achieved objectives from the event log."""
+        achieved: set[str] = set()
+        for event in self._events:
+            if event["type"] == "achieved":
+                achieved.update(event["objectives"])
+        return achieved
+
+    def _invalidate_counts_as_dependents(self, cleared_mark: str) -> None:
+        """Clear any counts-as marks that depend on a cleared achievement."""
+        if not self._counts_as:
+            return
+        for rule in self._counts_as:
+            if cleared_mark not in rule.get("when", []):
+                continue
+            derived = rule.get("marks")
+            if not derived:
+                continue
+            if self._service.clear_achievement(derived):
+                self._events = [
+                    e for e in self._events
+                    if not (e.get("type") == "achieved" and derived in e.get("objectives", []))
+                ]
+                self._log({"type": "achievement_reset", "agent": "agent",
+                           "mark": derived, "reason": f"dependency {cleared_mark} cleared"})
+                # Recurse for cascading counts-as chains
+                self._invalidate_counts_as_dependents(derived)
+
+    def _evaluate_counts_as(self, agent_id: str, role: str) -> None:
+        """Evaluate counts-as rules after achievements change.
+
+        Loops until stable to handle cascading rules (A+B→C, C+D→E).
+        """
+        if not self._counts_as:
+            return
+
+        achieved = self._get_achieved_set()
+        changed = True
+        while changed:
+            changed = False
+            for rule in self._counts_as:
+                when = rule.get("when", [])
+                if not all(w in achieved for w in when):
+                    continue
+
+                if "marks" in rule:
+                    mark = rule["marks"]
+                    if mark in achieved:
+                        continue  # already achieved, skip
+                    # Grant the new achievement.
+                    self._service.notify_action(agent_id, role, achieved=[mark])
+                    self._events.append({
+                        "type": "achieved", "agent": agent_id, "role": role,
+                        "objectives": [mark],
+                    })
+                    self._log({"type": "counts_as", "agent": agent_id,
+                               "role": role, "mark": mark,
+                               "when": when})
+                    achieved.add(mark)
+                    changed = True
+
+                if "creates_obligation" in rule:
+                    ob = rule["creates_obligation"]
+                    objective = ob.get("objective", "")
+                    if not objective or objective in achieved:
+                        continue  # already fulfilled
+                    # Check if this obligation already exists in events.
+                    already_exists = any(
+                        e.get("type") == "obligation_created"
+                        and e.get("objective") == objective
+                        for e in self._events
+                    )
+                    if already_exists:
+                        continue
+                    deadline = ob.get("deadline", "false")
+                    self.create_obligation(agent_id, role, objective, deadline)
+                    self._log({"type": "counts_as_obligation", "agent": agent_id,
+                               "role": role, "objective": objective,
+                               "when": when})
+                    changed = True
+
+        self._save_state()
 
     def _check_guardrails(self, context: dict, agent_id: str) -> dict | None:
         """Run guardrails checks after a tool use completes.

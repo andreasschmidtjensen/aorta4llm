@@ -122,6 +122,66 @@ class TestValidateSpecFile:
         r = validate_spec_file(f)
         assert not r.valid
 
+    def test_counts_as_valid(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": ["ready"], "capabilities": []}},
+            "counts_as": [
+                {"when": ["a", "b"], "marks": "ready"},
+            ],
+        })
+        assert r.valid
+        assert any("marks" in s for s in r.summary)
+
+    def test_counts_as_missing_when(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "counts_as": [{"marks": "ready"}],
+        })
+        assert not r.valid
+        assert any("when" in e for e in r.errors)
+
+    def test_counts_as_when_not_list(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "counts_as": [{"when": "a", "marks": "ready"}],
+        })
+        assert not r.valid
+        assert any("list" in e for e in r.errors)
+
+    def test_counts_as_missing_marks_and_obligation(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "counts_as": [{"when": ["a"]}],
+        })
+        assert not r.valid
+        assert any("marks" in e and "creates_obligation" in e for e in r.errors)
+
+    def test_counts_as_creates_obligation_valid(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "counts_as": [
+                {"when": ["a"], "creates_obligation": {"objective": "do_thing"}},
+            ],
+        })
+        assert r.valid
+        assert any("obligation" in s for s in r.summary)
+
+    def test_counts_as_creates_obligation_missing_objective(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "counts_as": [
+                {"when": ["a"], "creates_obligation": {"deadline": "git_commit"}},
+            ],
+        })
+        assert not r.valid
+        assert any("objective" in e for e in r.errors)
+
     @pytest.mark.parametrize("template", ["safe-agent", "test-gate"])
     def test_existing_templates_are_valid(self, template):
         path = _TEMPLATES_DIR / f"{template}.yaml"

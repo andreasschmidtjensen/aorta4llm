@@ -1062,3 +1062,248 @@ class TestNormalizeGitCmd:
         result = _normalize_git_cmd("git -C /p status; git -C /p commit -m 'x'")
         assert "git status" in result
         assert "git commit" in result
+
+
+class TestCountsAsRules:
+    """Tests for counts-as constitutive norm evaluation."""
+
+    def _make_hook(self, tmp_path, triggers=None, counts_as=None):
+        spec_dict = {
+            "organization": "counts_as_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["ready_to_merge"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "achievement_triggers": triggers or [],
+            "counts_as": counts_as or [],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+        return hook
+
+    def _fire_trigger(self, hook, command="pytest", exit_code=0):
+        """Simulate a Bash tool use that fires a trigger."""
+        hook.post_tool_use(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+                "tool_response": {"exit_code": exit_code},
+            },
+            agent="dev",
+        )
+
+    def test_counts_as_marks_on_conditions_met(self, tmp_path):
+        """When all 'when' achievements are present, marks fires."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"},
+                {"tool": "Bash", "command_pattern": "lint", "exit_code": 0, "marks": "lint_passing"},
+            ],
+            counts_as=[
+                {"when": ["tests_passing", "lint_passing"], "marks": "ready_to_merge"},
+            ],
+        )
+        # Fire first trigger
+        self._fire_trigger(hook, "pytest")
+        achieved = hook._get_achieved_set()
+        assert "tests_passing" in achieved
+        assert "ready_to_merge" not in achieved
+
+        # Fire second trigger — counts-as should cascade
+        self._fire_trigger(hook, "lint")
+        achieved = hook._get_achieved_set()
+        assert "lint_passing" in achieved
+        assert "ready_to_merge" in achieved
+
+    def test_counts_as_does_not_fire_when_conditions_unmet(self, tmp_path):
+        """Counts-as rule doesn't fire if not all conditions met."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"},
+            ],
+            counts_as=[
+                {"when": ["tests_passing", "lint_passing"], "marks": "ready_to_merge"},
+            ],
+        )
+        self._fire_trigger(hook, "pytest")
+        achieved = hook._get_achieved_set()
+        assert "tests_passing" in achieved
+        assert "ready_to_merge" not in achieved
+
+    def test_counts_as_creates_obligation(self, tmp_path):
+        """Counts-as rule can create obligations."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "model_created"},
+            ],
+            counts_as=[
+                {"when": ["model_created"], "creates_obligation": {
+                    "objective": "migration_created", "deadline": "git_commit"}},
+            ],
+        )
+        self._fire_trigger(hook, "pytest")
+        ob_events = [e for e in hook._events if e["type"] == "obligation_created"]
+        assert len(ob_events) == 1
+        assert ob_events[0]["objective"] == "migration_created"
+        assert ob_events[0]["deadline"] == "git_commit"
+
+    def test_counts_as_cascading(self, tmp_path):
+        """Counts-as rules can cascade: A+B→C, C→D."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "a"},
+                {"tool": "Bash", "command_pattern": "lint", "exit_code": 0, "marks": "b"},
+            ],
+            counts_as=[
+                {"when": ["a", "b"], "marks": "c"},
+                {"when": ["c"], "marks": "d"},
+            ],
+        )
+        self._fire_trigger(hook, "pytest")
+        self._fire_trigger(hook, "lint")
+        achieved = hook._get_achieved_set()
+        assert "c" in achieved
+        assert "d" in achieved
+
+    def test_counts_as_no_duplicate_achievement(self, tmp_path):
+        """Firing triggers again doesn't duplicate counts-as achievements."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"},
+            ],
+            counts_as=[
+                {"when": ["tests_passing"], "marks": "ready"},
+            ],
+        )
+        self._fire_trigger(hook, "pytest")
+        self._fire_trigger(hook, "pytest")
+        achieved_events = [e for e in hook._events
+                          if e["type"] == "achieved" and "ready" in e.get("objectives", [])]
+        assert len(achieved_events) == 1
+
+    def test_counts_as_no_duplicate_obligation(self, tmp_path):
+        """Firing triggers again doesn't duplicate obligations."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "model_created"},
+            ],
+            counts_as=[
+                {"when": ["model_created"], "creates_obligation": {
+                    "objective": "write_migration"}},
+            ],
+        )
+        self._fire_trigger(hook, "pytest")
+        self._fire_trigger(hook, "pytest")
+        ob_events = [e for e in hook._events if e["type"] == "obligation_created"]
+        assert len(ob_events) == 1
+
+    def test_counts_as_skips_obligation_if_already_achieved(self, tmp_path):
+        """No obligation created if objective is already achieved."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "x"},
+                {"tool": "Bash", "command_pattern": "lint", "exit_code": 0, "marks": "write_migration"},
+            ],
+            counts_as=[
+                {"when": ["x"], "creates_obligation": {
+                    "objective": "write_migration"}},
+            ],
+        )
+        # Achieve the obligation objective first
+        self._fire_trigger(hook, "lint")
+        # Now fire the trigger that would create the obligation
+        self._fire_trigger(hook, "pytest")
+        ob_events = [e for e in hook._events if e["type"] == "obligation_created"]
+        assert len(ob_events) == 0
+
+    def test_counts_as_marks_and_obligation_together(self, tmp_path):
+        """A single rule can both mark and create an obligation."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "x"},
+            ],
+            counts_as=[
+                {"when": ["x"], "marks": "y", "creates_obligation": {
+                    "objective": "z", "deadline": "false"}},
+            ],
+        )
+        self._fire_trigger(hook, "pytest")
+        achieved = hook._get_achieved_set()
+        assert "y" in achieved
+        ob_events = [e for e in hook._events if e["type"] == "obligation_created"]
+        assert len(ob_events) == 1
+        assert ob_events[0]["objective"] == "z"
+
+    def test_empty_counts_as_is_noop(self, tmp_path):
+        """No counts_as section means no extra processing."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "x"},
+            ],
+            counts_as=[],
+        )
+        self._fire_trigger(hook, "pytest")
+        achieved = hook._get_achieved_set()
+        assert "x" in achieved
+
+    def test_counts_as_cleared_on_dependency_reset(self, tmp_path):
+        """When a dependency is reset, derived counts-as marks are also cleared."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0,
+                 "marks": "tests_passing", "reset_on_file_change": True},
+                {"tool": "Bash", "command_pattern": "lint", "exit_code": 0,
+                 "marks": "lint_passing"},
+            ],
+            counts_as=[
+                {"when": ["tests_passing", "lint_passing"], "marks": "quality_verified"},
+            ],
+        )
+        # Achieve both → counts-as fires
+        self._fire_trigger(hook, "pytest")
+        self._fire_trigger(hook, "lint")
+        assert "quality_verified" in hook._get_achieved_set()
+
+        # File write resets tests_passing → quality_verified should also clear
+        hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "src/x.py", "content": "x"}},
+            agent="dev",
+        )
+        achieved = hook._get_achieved_set()
+        assert "tests_passing" not in achieved
+        assert "quality_verified" not in achieved
+        # lint_passing should still be there (no reset_on_file_change)
+        assert "lint_passing" in achieved
+
+    def test_counts_as_re_fires_after_reset(self, tmp_path):
+        """After reset, re-achieving conditions fires counts-as again."""
+        hook = self._make_hook(tmp_path,
+            triggers=[
+                {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0,
+                 "marks": "tests_passing", "reset_on_file_change": True},
+                {"tool": "Bash", "command_pattern": "lint", "exit_code": 0,
+                 "marks": "lint_passing"},
+            ],
+            counts_as=[
+                {"when": ["tests_passing", "lint_passing"], "marks": "quality_verified"},
+            ],
+        )
+        # First cycle: achieve → counts-as fires
+        self._fire_trigger(hook, "pytest")
+        self._fire_trigger(hook, "lint")
+        assert "quality_verified" in hook._get_achieved_set()
+
+        # Reset via file write
+        hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "src/x.py", "content": "x"}},
+            agent="dev",
+        )
+        assert "quality_verified" not in hook._get_achieved_set()
+
+        # Re-achieve tests_passing → counts-as should fire again
+        self._fire_trigger(hook, "pytest")
+        assert "quality_verified" in hook._get_achieved_set()

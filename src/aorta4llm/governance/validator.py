@@ -135,6 +135,35 @@ def validate_spec(spec_dict: dict) -> ValidationResult:
         if depends_on and depends_on not in defined_roles:
             result.errors.append(f"{label}: depends_on role '{depends_on}' not defined")
 
+    # Validate counts_as rules.
+    for i, rule in enumerate(spec_dict.get("counts_as", [])):
+        label = f"counts_as #{i + 1}"
+        if not isinstance(rule, dict):
+            result.errors.append(f"{label}: must be a mapping")
+            continue
+        when = rule.get("when")
+        if not when:
+            result.errors.append(f"{label}: missing 'when' (list of required achievements)")
+        elif not isinstance(when, list):
+            result.errors.append(f"{label}: 'when' must be a list")
+        has_marks = "marks" in rule
+        has_obligation = "creates_obligation" in rule
+        if not has_marks and not has_obligation:
+            result.errors.append(f"{label}: must have 'marks' and/or 'creates_obligation'")
+        if has_marks and not isinstance(rule["marks"], str):
+            result.errors.append(f"{label}: 'marks' must be a string")
+        if has_obligation:
+            ob = rule["creates_obligation"]
+            if not isinstance(ob, dict):
+                result.errors.append(f"{label}: 'creates_obligation' must be a mapping")
+            elif "objective" not in ob:
+                result.errors.append(f"{label}: creates_obligation missing 'objective'")
+        if has_marks:
+            result.summary.append(f"{label}: {when} -> marks '{rule['marks']}'")
+        if has_obligation and isinstance(rule.get("creates_obligation"), dict):
+            obj = rule["creates_obligation"].get("objective", "?")
+            result.summary.append(f"{label}: {when} -> obligation '{obj}'")
+
     return result
 
 

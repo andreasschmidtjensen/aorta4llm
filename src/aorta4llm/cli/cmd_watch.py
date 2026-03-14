@@ -1,4 +1,4 @@
-"""aorta watch — live tail of governance events."""
+"""aorta watch — live tail of governance events with counts-as support."""
 
 import json
 import time
@@ -54,9 +54,13 @@ def _format_event(event: dict) -> str | None:
             color = _SEVERITY_COLORS.get(severity, "")
             sev_str = f" {color}[{severity}]{_RESET}"
 
+        command = event.get("command", "")
         line = f"{ts} {symbol} {agent} {action}"
         if path:
             line += f" {path}"
+        elif command:
+            cmd_short = command if len(command) <= 40 else command[:37] + "..."
+            line += f" {cmd_short}"
         line += sev_str
         if decision == "block" and reason:
             short_reason = reason.split("\n")[0]
@@ -86,6 +90,25 @@ def _format_event(event: dict) -> str | None:
         reason = event.get("reason", "")
         suffix = f" ({reason})" if reason else ""
         return f"{ts} \033[33m✗\033[0m {agent} cleared {mark}{suffix}"
+
+    if etype == "counts_as":
+        agent = event.get("agent", "?")
+        mark = event.get("mark", "?")
+        when = event.get("when", [])
+        return f"{ts} \033[35m★\033[0m {agent} counts-as {mark} (from {', '.join(when)})"
+
+    if etype == "counts_as_obligation":
+        agent = event.get("agent", "?")
+        objective = event.get("objective", "?")
+        when = event.get("when", [])
+        return f"{ts} \033[33m!\033[0m {agent} obligation {objective} (from {', '.join(when)})"
+
+    if etype == "obligation_created":
+        agent = event.get("agent", "?")
+        objective = event.get("objective", "?")
+        deadline = event.get("deadline", "false")
+        dl_str = f" deadline={deadline}" if deadline != "false" else ""
+        return f"{ts} \033[33m!\033[0m {agent} obliged {objective}{dl_str}"
 
     if etype == "allow_once":
         path = event.get("path", "?")
