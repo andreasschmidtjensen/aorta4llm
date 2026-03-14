@@ -565,7 +565,7 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | ~~4~~ | ~~Thrashing detection + behavioral budgets (#4, #2)~~ | done — unified guardrails system |
 | ~~5~~ | ~~Richer triggers (#8)~~ | done |
 | ~~6~~ | ~~Obligation gate (`all_obligations_fulfilled`)~~ | done |
-| 6a | `aorta status` shows active obligations | #6 |
+| ~~6a~~ | ~~`aorta status` shows active obligations~~ | done |
 | 7 | Counts-as rules (#6) | #5 |
 | 8 | Post-write content validation (#1) | #6 (creates obligations) |
 | 9 | Sanctions (#7) | #6 |
@@ -573,10 +573,107 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | 11 | Scope drift (#3) | #6 |
 | 12 | Tool output redaction PoC (#5) | — |
 | 13 | Checkpoint/rollback (#9) | #5 (just uses existing required_before) |
-| 14 | Policy visualization, level 2: dashboard (#13) | #3 |
-| 15 | Policy visualization, level 3: graph (#13) | #7 (needs counts-as/obligations to visualize) |
+| 14 | Conversation replay harness (#14) | — (PreToolUse exact, PostToolUse approximate) |
+| 15 | Policy visualization, level 2: dashboard (#13) | #3 |
+| 16 | Policy visualization, level 3: graph (#13) | #7 (needs counts-as/obligations to visualize) |
 
-The first six priorities (#11, #12, #13-L1, #4+#2, #8, #6) are done. The obligation gate adds `all_obligations_fulfilled` as a built-in predicate, `create_obligation` on the service and hook layers, and event-sourced persistence. `aorta status` does not yet show active obligations (#6a). The counts-as rules (#7) are next.
+The first six priorities (#11, #12, #13-L1, #4+#2, #8, #6) are done. The obligation gate adds `all_obligations_fulfilled` as a built-in predicate, `create_obligation` on the service and hook layers, and event-sourced persistence. `aorta status` does not yet show active obligations (#6a). The counts-as rules (#7) are next. The replay harness (#14) can be built at any time — it has no dependencies on other extensions and serves as a validation tool for all of them.
+
+---
+
+## Extension 14: Conversation replay harness
+
+**Problem:** Testing AORTA policies against real agent behavior requires running an actual Claude Code session. There's no way to ask "what would this policy have done during yesterday's conversation?" or to validate new norms, thresholds, and extensions against real traces without deploying them live.
+
+**Key insight:** Claude Code stores full conversation traces as JSONL files in `~/.claude/projects/<project-dir>/<session-id>.jsonl`. These traces contain every tool call with full inputs and results — exactly what the AORTA hooks consume.
+
+### Trace format
+
+Each line is a JSON object with a `type` field:
+
+| `type` | Contents |
+|--------|----------|
+| `user` | User messages, or `tool_result` responses (content contains `type: "tool_result"` blocks with `tool_use_id`, `content`, `is_error`) |
+| `assistant` | Model responses with `tool_use` blocks (`name`, `input`, `id`) in `message.content[]` |
+| `progress` | Streaming progress (skip during replay) |
+| `queue-operation` | Internal queue management (skip) |
+| `file-history-snapshot` | File backup tracking (skip) |
+| `last-prompt` | Session end marker |
+
+Tool use blocks contain exactly what PreToolUse receives:
+- `name`: tool name (Bash, Write, Edit, Read, Glob, Grep, etc.)
+- `input.command`: for Bash
+- `input.file_path`: for Write/Edit/Read
+- `input.pattern`: for Grep/Glob
+
+Tool result blocks contain what PostToolUse receives:
+- `content`: result text (stdout for Bash)
+- `is_error`: whether the tool call failed
+
+Each line also carries `cwd`, `gitBranch`, `timestamp`, and `sessionId`.
+
+### What's missing from tool_result for PostToolUse replay
+
+The hook system receives a `tool_response` envelope with structured fields (`exitCode`, `stdout`, `stderr`). The JSONL `tool_result` stores the rendered content string, not the structured envelope. Replay needs to either:
+1. Parse exit codes and stdout/stderr back out of the result text (fragile)
+2. Accept that PostToolUse replay is approximate for Bash results
+3. Extend Claude Code's trace format (upstream change, not in our control)
+
+PreToolUse replay is exact — it only needs tool name and input params, which are fully preserved.
+
+### Approach
+
+An `aorta replay` command that walks a conversation trace and runs each tool call through the governance engine:
+
+```
+$ aorta replay --spec .aorta/safe-agent.yaml --trace ~/.claude/projects/.../session.jsonl
+
+Replaying 47 tool calls from session c08f7006...
+
+  #3  Read  .env                          → WOULD BLOCK (no-access)
+  #7  Write src/config.py                 → ALLOW
+  #12 Bash  "grep -r password src/"       → WOULD SOFT-BLOCK (use Grep tool)
+  #15 Bash  "pytest"                      → ALLOW
+  #15 PostToolUse                         → achievement: tests_passing
+  #23 Write ../other-repo/hack.py         → WOULD BLOCK (outside scope)
+  #31 Bash  "git commit -m 'wip'"         → ALLOW (tests_passing achieved)
+
+Summary:
+  47 tool calls, 3 would have been blocked, 1 soft-blocked
+  Achievements triggered: tests_passing (at #15, cleared at #28, re-triggered at #35)
+  Guardrails: failure rate peaked at 0.4 (threshold 0.5 — no hold triggered)
+```
+
+### Implementation
+
+1. **Trace parser** (`src/aorta4llm/replay/`): Extract `(tool_use, tool_result)` pairs from JSONL. Skip `progress`, `queue-operation`, and other noise. Handle sidechains (events with `isSidechain: true` — these are sub-agent calls like Bash command analysis). A `inspect_session.py` utility already exists for exploring the format.
+
+2. **Replay engine**: For each tool pair, construct the same event dicts that `hooks.py` builds from Claude Code's hook invocation, then call the governance check functions. Use a fresh in-memory state (or optionally load existing state for mid-session replay).
+
+3. **Dry-run mode**: All checks run but no state is persisted. The engine evaluates PreToolUse blocks, PostToolUse achievements, guardrail counters, and obligation gates — but writes nothing to `.aorta/state.json`.
+
+4. **Output modes**:
+   - `--format summary` (default): blocked/warned actions + achievement timeline
+   - `--format full`: every tool call annotated with ALLOW/BLOCK/WARN
+   - `--format json`: machine-readable for batch analysis
+
+### What this enables
+
+- **Policy validation**: Test new norms against real conversations before deploying
+- **Threshold tuning**: Run guardrails (failure rate, budgets) against real traces to find sweet spots
+- **Extension testing**: Validate counts-as rules, obligation chains, sanctions against real workflows
+- **Regression testing**: Ensure engine changes don't alter behavior on known-good traces
+- **Batch analysis**: Replay all sessions for a project to find patterns ("how often do agents write outside scope?")
+
+### Trace discovery
+
+Session files live at `~/.claude/projects/<encoded-project-path>/<session-id>.jsonl`. The project path is the absolute path with `/` replaced by `-`. The `aorta replay` command could accept either a direct path or discover sessions automatically:
+
+```
+$ aorta replay --spec .aorta/safe-agent.yaml --last     # most recent session
+$ aorta replay --spec .aorta/safe-agent.yaml --all      # all sessions for this project
+$ aorta replay --spec .aorta/safe-agent.yaml --trace <path>  # specific session
+```
 
 ---
 

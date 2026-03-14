@@ -249,3 +249,93 @@ class TestStatusTree:
         assert "Roles" in out
         assert "Role: developer" in out
         assert "Role: reviewer" in out
+
+    def test_obligations_shown_in_tree(self, capsys):
+        """Active obligations shown with ! marker."""
+        spec = {
+            "organization": "test",
+            "roles": {"agent": {"objectives": ["task_complete"], "capabilities": []}},
+        }
+        obligations = [
+            {"agent": "agent", "role": "agent", "objective": "fix_leak", "deadline": "false"},
+        ]
+        run_tree(spec, achievements=[], packs=[], obligations=obligations)
+        out = capsys.readouterr().out
+
+        assert "Obligations" in out
+        assert "! fix_leak" in out
+
+    def test_obligations_with_deadline(self, capsys):
+        """Obligations with deadlines show the deadline."""
+        spec = {
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+        }
+        obligations = [
+            {"agent": "agent", "role": "agent", "objective": "create_migration",
+             "deadline": "git_commit"},
+        ]
+        run_tree(spec, achievements=[], packs=[], obligations=obligations)
+        out = capsys.readouterr().out
+
+        assert "! create_migration" in out
+        assert "(deadline: git_commit)" in out
+
+    def test_no_obligations_section_when_empty(self, capsys):
+        """No obligations section when none active."""
+        spec = {
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+        }
+        run_tree(spec, achievements=[], packs=[], obligations=[])
+        out = capsys.readouterr().out
+
+        assert "Obligations" not in out
+
+    def test_fulfilled_obligations_excluded(self, tmp_path, capsys):
+        """Obligations whose objective was achieved are not shown."""
+        spec_dict = {
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+        }
+        spec_file = self._setup_spec(tmp_path, spec_dict)
+        # State has obligation_created AND achieved for same objective
+        state_path = tmp_path / "state.json"
+        state_path.write_text(json.dumps({
+            "events": [
+                {"type": "register", "agent": "agent", "role": "agent", "scope": ""},
+                {"type": "obligation_created", "agent": "agent", "role": "agent",
+                 "objective": "fix_leak", "deadline": "false"},
+                {"type": "achieved", "agent": "agent", "role": "agent",
+                 "objectives": ["fix_leak"]},
+            ],
+            "exceptions": [],
+        }))
+        args = self._make_args(spec_file)
+        run(args)
+        out = capsys.readouterr().out
+
+        assert "Obligations" not in out
+
+    def test_active_obligation_shown_via_run(self, tmp_path, capsys):
+        """Integration: run() with --tree shows active obligations from state."""
+        spec_dict = {
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+        }
+        spec_file = self._setup_spec(tmp_path, spec_dict)
+        state_path = tmp_path / "state.json"
+        state_path.write_text(json.dumps({
+            "events": [
+                {"type": "register", "agent": "agent", "role": "agent", "scope": ""},
+                {"type": "obligation_created", "agent": "agent", "role": "agent",
+                 "objective": "remove_leaked_secret", "deadline": "false"},
+            ],
+            "exceptions": [],
+        }))
+        args = self._make_args(spec_file)
+        run(args)
+        out = capsys.readouterr().out
+
+        assert "Obligations" in out
+        assert "! remove_leaked_secret" in out

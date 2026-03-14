@@ -81,13 +81,15 @@ def _format_norm_line(norm: dict, pack_name: str | None = None) -> str:
 
 
 def run_tree(spec: dict, achievements: list[str], packs: list[str],
-             hold: dict | None = None):
+             hold: dict | None = None,
+             obligations: list[dict] | None = None):
     """Render the org spec as a tree with box-drawing characters."""
     org_name = spec.get("organization", "?")
     roles = spec.get("roles", {})
     access = spec.get("access", {})
     norms = spec.get("norms", [])
     triggers = spec.get("achievement_triggers", [])
+    obligations = obligations or []
 
     # Build provenance map
     provenance = _build_pack_provenance(packs)
@@ -118,6 +120,8 @@ def run_tree(spec: dict, achievements: list[str], packs: list[str],
         sections.append("access")
     if norms:
         sections.append("norms")
+    if obligations:
+        sections.append("obligations")
     if all_objectives:
         sections.append("achievements")
     if packs:
@@ -179,6 +183,16 @@ def run_tree(spec: dict, achievements: list[str], packs: list[str],
                 line = _format_norm_line(norm, pack_name)
                 print(f"{cont}{nb}{line}")
 
+        elif section == "obligations":
+            print(f"{branch}Obligations")
+            for oi, ob in enumerate(obligations):
+                is_last = oi == len(obligations) - 1
+                ob_branch = "└── " if is_last else "├── "
+                obj = ob["objective"]
+                deadline = ob.get("deadline", "false")
+                dl_str = f"  (deadline: {deadline})" if deadline != "false" else ""
+                print(f"{cont}{ob_branch}! {obj}{dl_str}")
+
         elif section == "achievements":
             print(f"{branch}Achievements")
             for ai, obj in enumerate(all_objectives):
@@ -221,9 +235,11 @@ def run(args):
     # Load state
     agents = {}
     achievements = []
+    obligations: list[dict] = []
     exceptions = []
     if state_path.exists():
         state = json.loads(state_path.read_text())
+        achieved_set: set[str] = set()
         for event in state.get("events", []):
             if event["type"] == "register":
                 agents[event["agent"]] = {
@@ -232,6 +248,16 @@ def run(args):
                 }
             elif event["type"] == "achieved":
                 achievements.extend(event["objectives"])
+                achieved_set.update(event["objectives"])
+            elif event["type"] == "obligation_created":
+                obligations.append({
+                    "agent": event["agent"],
+                    "role": event["role"],
+                    "objective": event["objective"],
+                    "deadline": event.get("deadline", "false"),
+                })
+        # Remove fulfilled obligations (objective was achieved)
+        obligations = [o for o in obligations if o["objective"] not in achieved_set]
         exceptions = state.get("exceptions", [])
 
     # Load recent events for stats
@@ -249,7 +275,7 @@ def run(args):
         if state_path.exists():
             state_data = json.loads(state_path.read_text())
             hold = state_data.get("hold")
-        run_tree(resolved, achievements, packs, hold=hold)
+        run_tree(resolved, achievements, packs, hold=hold, obligations=obligations)
         return
 
     if args.json_output:
@@ -258,6 +284,7 @@ def run(args):
             "organization": spec.get("organization", "?"),
             "agents": agents,
             "achievements": achievements,
+            "obligations": obligations,
             "exceptions": exceptions,
             "access": spec.get("access", {}),
             "norms": len(spec.get("norms", [])),
@@ -319,6 +346,15 @@ def run(args):
     else:
         print("Achievements: none")
     print()
+
+    # Obligations
+    if obligations:
+        print(f"Active obligations ({len(obligations)}):")
+        for ob in obligations:
+            deadline = ob.get("deadline", "false")
+            dl_str = f" (deadline: {deadline})" if deadline != "false" else ""
+            print(f"  ! {ob['objective']}{dl_str}  [{ob['agent']}]")
+        print()
 
     # Allow-once exceptions
     if exceptions:
