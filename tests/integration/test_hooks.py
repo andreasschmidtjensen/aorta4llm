@@ -660,6 +660,224 @@ class TestPipedCommandSkipsExitCodeTriggers:
         assert len(achievements) == 1
 
 
+class TestRicherTriggers:
+    """Tests for path_pattern, output_contains, and clears triggers."""
+
+    def _make_hook(self, tmp_path, triggers, norms=None):
+        objectives = list({t.get("marks") or t.get("clears") for t in triggers})
+        spec_dict = {
+            "organization": "rich_trigger_test",
+            "roles": {
+                "agent": {
+                    "objectives": objectives,
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "achievement_triggers": triggers,
+        }
+        if norms:
+            spec_dict["norms"] = norms
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+        return hook
+
+    # --- path_pattern ---
+
+    def test_path_pattern_matches_write(self, tmp_path):
+        triggers = [{"tool": "Write", "path_pattern": "src/models/*.py", "marks": "model_created"}]
+        hook = self._make_hook(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "src/models/user.py"}},
+            agent="dev",
+        )
+        achieved = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achieved) == 1
+        assert "model_created" in achieved[0]["objectives"]
+
+    def test_path_pattern_no_match_wrong_path(self, tmp_path):
+        triggers = [{"tool": "Write", "path_pattern": "src/models/*.py", "marks": "model_created"}]
+        hook = self._make_hook(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "src/views/home.py"}},
+            agent="dev",
+        )
+        achieved = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achieved) == 0
+
+    def test_path_pattern_with_absolute_path(self, tmp_path, monkeypatch):
+        """Absolute paths are made relative before matching."""
+        monkeypatch.chdir(tmp_path)
+        triggers = [{"tool": "Write", "path_pattern": "src/models/*.py", "marks": "model_created"}]
+        hook = self._make_hook(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Write",
+             "tool_input": {"file_path": str(tmp_path / "src/models/user.py")}},
+            agent="dev",
+        )
+        achieved = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achieved) == 1
+
+    def test_path_pattern_on_edit(self, tmp_path):
+        triggers = [{"tool": "Edit", "path_pattern": "migrations/*.py", "marks": "migration_created"}]
+        hook = self._make_hook(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Edit", "tool_input": {"file_path": "migrations/001.py"}},
+            agent="dev",
+        )
+        achieved = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achieved) == 1
+
+    # --- output_contains ---
+
+    def test_output_contains_matches(self, tmp_path):
+        triggers = [{"tool": "Bash", "output_contains": "All tests passed", "marks": "tests_passing"}]
+        hook = self._make_hook(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 0, "stdout": "===== All tests passed ====="}},
+            agent="dev",
+        )
+        achieved = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achieved) == 1
+
+    def test_output_contains_no_match(self, tmp_path):
+        triggers = [{"tool": "Bash", "output_contains": "All tests passed", "marks": "tests_passing"}]
+        hook = self._make_hook(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 1, "stdout": "FAILED 3 tests"}},
+            agent="dev",
+        )
+        achieved = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achieved) == 0
+
+    def test_output_contains_regex(self, tmp_path):
+        triggers = [{"tool": "Bash", "output_contains": r"\d+ passed", "marks": "tests_passing"}]
+        hook = self._make_hook(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 0, "stdout": "42 passed in 1.2s"}},
+            agent="dev",
+        )
+        achieved = [e for e in hook._events if e["type"] == "achieved"]
+        assert len(achieved) == 1
+
+    def test_output_contains_with_command_pattern(self, tmp_path):
+        """output_contains and command_pattern can be combined."""
+        triggers = [{
+            "tool": "Bash",
+            "command_pattern": "pytest",
+            "output_contains": "passed",
+            "marks": "tests_passing",
+        }]
+        hook = self._make_hook(tmp_path, triggers)
+        # Right command, wrong output
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 1, "stdout": "FAILED"}},
+            agent="dev",
+        )
+        assert len([e for e in hook._events if e["type"] == "achieved"]) == 0
+        # Right command, right output
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 0, "stdout": "5 passed"}},
+            agent="dev",
+        )
+        assert len([e for e in hook._events if e["type"] == "achieved"]) == 1
+
+    # --- clears (negative triggers) ---
+
+    def test_clears_removes_achievement(self, tmp_path):
+        triggers = [
+            {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"},
+            {"tool": "Bash", "output_contains": "FAIL|error|Exception", "clears": "tests_passing"},
+        ]
+        hook = self._make_hook(tmp_path, triggers)
+        # Mark achievement
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 0, "stdout": "5 passed"}},
+            agent="dev",
+        )
+        assert len([e for e in hook._events if e["type"] == "achieved"]) == 1
+
+        # Clear it via negative trigger
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "make build"},
+             "tool_response": {"exit_code": 1, "stdout": "Exception: build failed"}},
+            agent="dev",
+        )
+        # Achievement event should be removed from persisted events
+        assert len([e for e in hook._events if e["type"] == "achieved"]) == 0
+
+    def test_clears_reblocks_gated_command(self, tmp_path):
+        """Negative trigger re-blocks a command that was previously unlocked."""
+        triggers = [
+            {"tool": "Bash", "command_pattern": "pytest", "exit_code": 0, "marks": "tests_passing"},
+            {"tool": "Bash", "output_contains": "FAIL", "clears": "tests_passing"},
+        ]
+        norms = [{
+            "role": "agent",
+            "type": "required_before",
+            "command_pattern": "git commit",
+            "requires": "tests_passing",
+        }]
+        hook = self._make_hook(tmp_path, triggers, norms=norms)
+
+        # Unlock gate
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "pytest"},
+             "tool_response": {"exit_code": 0, "stdout": "ok"}},
+            agent="dev",
+        )
+        r = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}},
+            agent="dev",
+        )
+        assert r["decision"] == "approve"
+
+        # Negative trigger clears it
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "npm run lint"},
+             "tool_response": {"exit_code": 1, "stdout": "FAIL: lint errors"}},
+            agent="dev",
+        )
+
+        # Gate re-blocked
+        r = hook.pre_tool_use(
+            {"tool_name": "Bash", "tool_input": {"command": "git commit -m 'x'"}},
+            agent="dev",
+        )
+        assert r["decision"] == "block"
+
+    def test_clears_noop_if_not_achieved(self, tmp_path):
+        """Clearing a non-existent achievement is a no-op."""
+        triggers = [
+            {"tool": "Bash", "output_contains": "FAIL", "clears": "tests_passing"},
+        ]
+        hook = self._make_hook(tmp_path, triggers)
+        hook.post_tool_use(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "make"},
+             "tool_response": {"exit_code": 1, "stdout": "FAIL"}},
+            agent="dev",
+        )
+        # Should not crash, no achieved events to remove
+        assert len([e for e in hook._events if e["type"] == "achieved"]) == 0
+
+
 class TestGovernanceCommandBlocking:
     """Mutating aorta commands are blocked; read-only ones are allowed."""
 
@@ -761,7 +979,8 @@ class TestClearTransientState:
 
         # Add exception and soft block
         hook._exceptions.append({"path": ".env", "agent": "*", "ts": 0, "uses": 1})
-        hook._soft_block_cache["test_key"] = 12345.0
+        import time
+        hook._soft_block_cache["test_key"] = time.time()
         hook._save_state()
 
         # Verify they're in state

@@ -94,12 +94,23 @@ def run(args):
         return
 
     if not args.template:
-        print("Available templates:")
-        for t in list_templates():
-            print(f"  {t['name']:20s} {t['description']}")
-        print(f"  {'minimal':20s} Scope-only — no norms, no bash analysis")
-        print("\nUsage: aorta init --template <name> --scope <dir>")
-        raise SystemExit(1)
+        # --reinit without --template: auto-detect existing spec.
+        if args.reinit:
+            from aorta4llm.cli.spec_utils import find_org_spec
+            try:
+                existing_spec = find_org_spec(None)
+                # Derive template name from filename (e.g. .aorta/safe-agent.yaml -> safe-agent).
+                args.template = existing_spec.stem
+            except SystemExit:
+                print("No existing org spec found in .aorta/. Use --template to specify one.")
+                raise SystemExit(1)
+        else:
+            print("Available templates:")
+            for t in list_templates():
+                print(f"  {t['name']:20s} {t['description']}")
+            print(f"  {'minimal':20s} Scope-only — no norms, no bash analysis")
+            print("\nUsage: aorta init --template <name> --scope <dir>")
+            raise SystemExit(1)
 
     # Normalize scopes: ensure trailing slash.
     # Handle both "--scope src/ tests/" (multiple args) and "--scope 'src/ tests/'" (single arg with spaces).
@@ -123,20 +134,30 @@ def run(args):
         }
         org_spec_dest = Path(".aorta/minimal.yaml")
     else:
-        template_path = TEMPLATES_DIR / f"{args.template}.yaml"
-        if not template_path.exists():
-            print(f"Template not found: {args.template}")
-            print("Available:", ", ".join(t["name"] for t in list_templates()))
-            raise SystemExit(1)
-
-        # 1. Read template, strip header comments, update for user's config.
-        with open(template_path) as f:
-            spec = yaml.safe_load(f)
-
         org_spec_dest = Path(f".aorta/{args.template}.yaml")
 
+        if not (args.reinit and org_spec_dest.exists()):
+            # Fresh init: read from bundled template.
+            template_path = TEMPLATES_DIR / f"{args.template}.yaml"
+            if not template_path.exists():
+                print(f"Template not found: {args.template}")
+                print("Available:", ", ".join(t["name"] for t in list_templates()))
+                raise SystemExit(1)
+
+            with open(template_path) as f:
+                spec = yaml.safe_load(f)
+        else:
+            # Reinit: read existing spec now so hooks config is correct.
+            with open(org_spec_dest) as f:
+                spec = yaml.safe_load(f)
+            # Derive scope from existing spec's access map.
+            rw_scopes = [k for k, v in spec.get("access", {}).items() if v == "read-write"]
+            if rw_scopes:
+                scopes = rw_scopes
+                scope_str = " ".join(scopes)
+
     # 2. Update scope to match --scope (skip for minimal — already set).
-    if args.template != "minimal":
+    if args.template != "minimal" and not (args.reinit and org_spec_dest.exists()):
         # If the template has an access map, update read-write entries.
         # Otherwise, update scope norms (legacy templates).
         if "access" in spec:
@@ -244,10 +265,12 @@ def run(args):
 
     org_spec_dest.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(org_spec_dest, "w") as f:
-        yaml.dump(spec, f, default_flow_style=False, sort_keys=False)
-
-    print(f"Created org spec at {org_spec_dest}")
+    if args.reinit and org_spec_dest.exists():
+        print(f"Kept existing org spec at {org_spec_dest}")
+    else:
+        with open(org_spec_dest, "w") as f:
+            yaml.dump(spec, f, default_flow_style=False, sort_keys=False)
+        print(f"Created org spec at {org_spec_dest}")
     print(f"  Allowed scope(s): {scope_str}")
 
     # 5. Write .claude/settings.local.json — smart merge with existing hooks.

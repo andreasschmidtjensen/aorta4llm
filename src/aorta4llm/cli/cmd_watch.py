@@ -80,6 +80,13 @@ def _format_event(event: dict) -> str | None:
         mark = event.get("mark", "?")
         return f"{ts} \033[33m↺\033[0m {agent} reset {mark}"
 
+    if etype == "achievement_cleared":
+        agent = event.get("agent", "?")
+        mark = event.get("mark", "?")
+        reason = event.get("reason", "")
+        suffix = f" ({reason})" if reason else ""
+        return f"{ts} \033[33m✗\033[0m {agent} cleared {mark}{suffix}"
+
     if etype == "allow_once":
         path = event.get("path", "?")
         agent = event.get("agent", "*")
@@ -93,7 +100,8 @@ def _format_event(event: dict) -> str | None:
         writes = event.get("writes", [])
         return f"{ts} {symbol} {agent} bash writes: {writes}"
 
-    return None
+    # Fallback: show unrecognized events raw so nothing is silently dropped.
+    return f"{ts} \033[90m{etype}\033[0m {json.dumps({k: v for k, v in event.items() if k not in ('ts', 'type', 'org_spec')})}"
 
 
 def run(args):

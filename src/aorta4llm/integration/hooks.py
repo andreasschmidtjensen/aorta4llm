@@ -338,7 +338,10 @@ class GovernanceHook:
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         state: dict = {
             "events": self._events,
-            "soft_blocks": self._soft_block_cache,
+            "soft_blocks": {
+                k: v for k, v in self._soft_block_cache.items()
+                if (time.time() - v) < self._soft_block_window
+            },
         }
         if self._exceptions:
             state["exceptions"] = self._exceptions
@@ -377,6 +380,11 @@ class GovernanceHook:
         event = {"type": "register", "agent": agent, "role": role, "scope": scope}
         if reinit:
             event["reinit"] = True
+            # Replace existing registration for this agent instead of duplicating.
+            self._events = [
+                e for e in self._events
+                if not (e.get("type") == "register" and e.get("agent") == agent)
+            ]
         self._events.append(event)
         self._save_state()
         if not self._replaying:
@@ -600,7 +608,8 @@ class GovernanceHook:
                 }
 
         tool_response = context.get("tool_response", {})
-        exit_code = tool_response.get("exit_code", 0)
+        # Claude Code sends camelCase "exitCode"; support both.
+        exit_code = tool_response.get("exitCode", tool_response.get("exit_code", 0))
 
         agent_id = agent or context.get("agent_name", "default-agent")
         role = self._get_agent_role(agent_id)
@@ -614,6 +623,7 @@ class GovernanceHook:
         cmd_is_piped = _command_is_piped(raw_cmd) if tool_name == "Bash" else False
 
         achieved = []
+        cleared = []
         for trigger in self._triggers:
             if trigger.get("tool") != tool_name:
                 continue
@@ -630,7 +640,25 @@ class GovernanceHook:
                 cmd = _normalize_git_cmd(cmd)
                 if not re.search(pattern, cmd):
                     continue
-            achieved.append(trigger["marks"])
+            # path_pattern: glob match on the file path (Write/Edit/Read).
+            path_pattern = trigger.get("path_pattern", "")
+            if path_pattern:
+                import fnmatch
+                raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+                rel_path = _make_relative(raw_path, self._org_spec_path) if raw_path else ""
+                if not rel_path or not fnmatch.fnmatch(rel_path, path_pattern):
+                    continue
+            # output_contains: regex match on tool output (stdout + stderr).
+            output_pattern = trigger.get("output_contains", "")
+            if output_pattern:
+                output = tool_response.get("stdout", "") + tool_response.get("stderr", "")
+                if not re.search(output_pattern, output):
+                    continue
+            # Trigger matched — either marks or clears an achievement.
+            if "marks" in trigger:
+                achieved.append(trigger["marks"])
+            elif "clears" in trigger:
+                cleared.append(trigger["clears"])
 
         if achieved:
             self._service.notify_action(agent_id, role, achieved=achieved)
@@ -643,6 +671,19 @@ class GovernanceHook:
                 self._log(
                     {"type": "achieved", "agent": agent_id, "role": role, "mark": mark},
                 )
+
+        if cleared:
+            for mark in cleared:
+                if self._service.clear_achievement(mark):
+                    self._events = [
+                        e for e in self._events
+                        if not (e.get("type") == "achieved" and mark in e.get("objectives", []))
+                    ]
+                    self._log(
+                        {"type": "achievement_cleared", "agent": agent_id,
+                         "role": role, "mark": mark, "reason": "negative trigger"},
+                    )
+            self._save_state()
 
         # Guardrails tracking.
         result = self._check_guardrails(context, agent_id)
@@ -673,7 +714,7 @@ class GovernanceHook:
         if not action:
             return None
 
-        exit_code = tool_response.get("exit_code")
+        exit_code = tool_response.get("exitCode", tool_response.get("exit_code"))
         failed = (exit_code is not None and exit_code != 0)
 
         # Track in ring buffer (for failure_rate).

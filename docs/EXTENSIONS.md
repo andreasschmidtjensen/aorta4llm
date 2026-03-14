@@ -16,7 +16,7 @@ The AORTA framework (Jensen, 2015) defines a much richer set of organizational c
 | PreToolUse | Require achievement before command | Obligation (required_before) |
 | PreToolUse | Bash write-path analysis | Prohibition (derived) |
 | PreToolUse | Block all actions when held | Hold (hard gate) |
-| PostToolUse | Achievement triggers | Obligation fulfillment |
+| PostToolUse | Achievement triggers (path, output, negative) | Obligation fulfillment |
 | PostToolUse | Sensitive content warning | Prompt-level nudge |
 | PostToolUse | Guardrails (failure rate, budgets) | Monitoring + sanctions |
 | System prompt | Obligation injection | OG phase (partial) |
@@ -207,11 +207,15 @@ Combined with the obligation gate, this creates accountability: violation → ob
 
 ---
 
-## Extension 8: Richer achievement triggers
+## Extension 8: Richer achievement triggers (done)
 
 **Problem:** Current triggers only match tool name + command pattern + exit code. Can't express "file was written to path matching X" or "output contains error."
 
-**Approach:** Extend triggers with new match conditions:
+Implemented with three new match conditions that compose freely with existing ones:
+
+- **`path_pattern`** — glob match on the file path (Write/Edit/Read). Absolute paths are normalized to project-relative before matching.
+- **`output_contains`** — regex match on Bash stdout (`tool_response.stdout`). Can combine with `command_pattern` and/or `exit_code`.
+- **`clears`** — negative trigger, alternative to `marks`. Removes a previously achieved objective and its persisted events. Re-blocks any gate that depends on it.
 
 ```yaml
 achievement_triggers:
@@ -238,7 +242,7 @@ achievement_triggers:
     marks: migration_created
 ```
 
-This is the lowest-effort, highest-leverage extension of what already exists. Combined with counts-as rules (Extension 6), it enables: "model file written → `model_created` → counts-as triggers obligation for `migration_created` → blocked from committing until migration exists."
+Combined with counts-as rules (Extension 6), this enables: "model file written → `model_created` → counts-as triggers obligation for `migration_created` → blocked from committing until migration exists."
 
 ---
 
@@ -559,7 +563,7 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | ~~2a~~ | ~~`aorta include` CLI command (#12)~~ | done |
 | ~~3~~ | ~~Policy visualization, level 1: tree (#13)~~ | done |
 | ~~4~~ | ~~Thrashing detection + behavioral budgets (#4, #2)~~ | done — unified guardrails system |
-| 5 | Richer triggers (#8) | — |
+| ~~5~~ | ~~Richer triggers (#8)~~ | done |
 | 6 | Obligation gate (`all_obligations_fulfilled`) | — |
 | 7 | Counts-as rules (#6) | #5 |
 | 8 | Post-write content validation (#1) | #6 (creates obligations) |
@@ -571,7 +575,7 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | 14 | Policy visualization, level 2: dashboard (#13) | #3 |
 | 15 | Policy visualization, level 3: graph (#13) | #7 (needs counts-as/obligations to visualize) |
 
-The first four priorities (#11, #12, #13-L1, #4+#2) are done. They deliver immediate user-facing value: better block messages, less configuration boilerplate, a way to verify the result, and automated detection of stuck agents. The obligation gate (#6) is the lynchpin for the engine extensions that follow.
+The first five priorities (#11, #12, #13-L1, #4+#2, #8) are done. They deliver immediate user-facing value: better block messages, less configuration boilerplate, a way to verify the result, automated detection of stuck agents, and richer achievement triggers (path patterns, output matching, negative triggers). The obligation gate (#6) is the lynchpin for the engine extensions that follow.
 
 ---
 
