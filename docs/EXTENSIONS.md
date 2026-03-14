@@ -564,7 +564,8 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | ~~3~~ | ~~Policy visualization, level 1: tree (#13)~~ | done |
 | ~~4~~ | ~~Thrashing detection + behavioral budgets (#4, #2)~~ | done — unified guardrails system |
 | ~~5~~ | ~~Richer triggers (#8)~~ | done |
-| 6 | Obligation gate (`all_obligations_fulfilled`) | — |
+| ~~6~~ | ~~Obligation gate (`all_obligations_fulfilled`)~~ | done |
+| 6a | `aorta status` shows active obligations | #6 |
 | 7 | Counts-as rules (#6) | #5 |
 | 8 | Post-write content validation (#1) | #6 (creates obligations) |
 | 9 | Sanctions (#7) | #6 |
@@ -575,7 +576,7 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 | 14 | Policy visualization, level 2: dashboard (#13) | #3 |
 | 15 | Policy visualization, level 3: graph (#13) | #7 (needs counts-as/obligations to visualize) |
 
-The first five priorities (#11, #12, #13-L1, #4+#2, #8) are done. They deliver immediate user-facing value: better block messages, less configuration boilerplate, a way to verify the result, automated detection of stuck agents, and richer achievement triggers (path patterns, output matching, negative triggers). The obligation gate (#6) is the lynchpin for the engine extensions that follow.
+The first six priorities (#11, #12, #13-L1, #4+#2, #8, #6) are done. The obligation gate adds `all_obligations_fulfilled` as a built-in predicate, `create_obligation` on the service and hook layers, and event-sourced persistence. `aorta status` does not yet show active obligations (#6a). The counts-as rules (#7) are next.
 
 ---
 

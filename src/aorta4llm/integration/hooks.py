@@ -331,6 +331,11 @@ class GovernanceHook:
                     event["agent"], event["role"],
                     deadlines_reached=event["deadlines"],
                 )
+            elif etype == "obligation_created":
+                self._service.create_obligation(
+                    event["agent"], event["role"],
+                    event["objective"], event.get("deadline", "false"),
+                )
         self._replaying = False
 
     def _save_state(self):
@@ -385,6 +390,20 @@ class GovernanceHook:
                 e for e in self._events
                 if not (e.get("type") == "register" and e.get("agent") == agent)
             ]
+        self._events.append(event)
+        self._save_state()
+        if not self._replaying:
+            self._log(event)
+
+    def create_obligation(self, agent: str, role: str, objective: str,
+                          deadline: str = "false") -> None:
+        """Create a runtime obligation, persisted as an event."""
+        self._service.create_obligation(agent, role, objective, deadline)
+        event = {
+            "type": "obligation_created",
+            "agent": agent, "role": role,
+            "objective": objective, "deadline": deadline,
+        }
         self._events.append(event)
         self._save_state()
         if not self._replaying:

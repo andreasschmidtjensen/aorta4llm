@@ -243,9 +243,11 @@ def _compile_required_before(norm: dict, spec: CompiledSpec) -> None:
     h = hashlib.sha1(command_pattern.encode()).hexdigest()[:6]
     helper = f"cmd_matches_{h}"
 
-    # cond/5: block execute_command(Cmd) when helper matches but achievement missing
-    # Use parenthesized conjunction (A, B) which the terms parser understands
-    condition = f"({helper}(Cmd), not(achieved({requires})))"
+    # cond/5: block execute_command(Cmd) when helper matches but requirement missing
+    if requires == "all_obligations_fulfilled":
+        condition = f"({helper}(Cmd), not(all_obligations_fulfilled))"
+    else:
+        condition = f"({helper}(Cmd), not(achieved({requires})))"
     spec.facts.append(
         f"cond({role}, forbidden, execute_command(Cmd), false, {condition})"
     )

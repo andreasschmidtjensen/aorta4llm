@@ -4,6 +4,10 @@
 
 aorta4llm applies the AORTA organizational reasoning framework (Jensen, 2015) to LLM agent systems. Hybrid architecture: LLMs handle natural language/planning, a pure-Python logic engine handles deterministic constraint enforcement.
 
+## IMPORTANT
+- Never implement anything without being asked to. When asked a question, it is not critique, it is a request for information to help you do your job. If you don't know the answer, say so. If you need more information, ask.
+- Always ask for clarification if a request is ambiguous. It's better to ask than to make assumptions and potentially go down the wrong path.
+
 ## Build & Test
 
 ```bash

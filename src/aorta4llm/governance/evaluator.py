@@ -117,6 +117,13 @@ class ConditionEvaluator:
                 return [subst]
             if term.value == "false":
                 return []
+            # Built-in: all_obligations_fulfilled — succeeds when no active obligations exist
+            if term.value == "all_obligations_fulfilled":
+                for args in self._facts.get_all("norm", 5):
+                    _, _, deon, _, _ = args
+                    if isinstance(deon, Atom) and deon.value == "obliged":
+                        return []  # Found an active obligation
+                return [subst]
             # Bare atom — check if it's a zero-arity fact
             if self._facts.has_fact(term.value, ()):
                 return [subst]

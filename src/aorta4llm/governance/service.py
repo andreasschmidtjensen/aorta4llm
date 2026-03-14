@@ -55,6 +55,20 @@ class GovernanceService:
         term = parse_term(objective) if "(" in objective else Atom(objective)
         return self._engine._facts.retract_fact("achieved", (term,))
 
+    def create_obligation(self, agent: str, role: str, objective: str,
+                          deadline: str = "false") -> None:
+        """Create a runtime obligation for an agent.
+
+        Asserts a norm/5 fact directly. The obligation is fulfilled through
+        the standard path: achieving the objective triggers NC fulfillment.
+        """
+        from aorta4llm.governance.terms import Atom, parse_term
+        obj_term = parse_term(objective) if "(" in objective else Atom(objective)
+        dl_term = parse_term(deadline) if "(" in deadline else Atom(deadline)
+        self._engine._facts.assert_fact("norm", (
+            Atom(agent), Atom(role), Atom("obliged"), obj_term, dl_term,
+        ))
+
     def get_obligations(self, agent: str, role: str) -> dict:
         """Return active obligations and generated options for an agent."""
         return self._engine.get_obligations(agent, role)

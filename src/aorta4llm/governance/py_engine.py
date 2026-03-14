@@ -44,6 +44,8 @@ def _describe_condition(cond: TermType, subst: Substitution) -> str:
         if isinstance(inner, Term) and inner.functor == "achieved":
             req = term_to_str(inner.args[0]) if inner.args else "?"
             return f"requires '{req}' to be achieved first"
+        if isinstance(inner, Atom) and inner.value == "all_obligations_fulfilled":
+            return "requires all obligations to be fulfilled first"
         return f"condition not met: {term_to_str(inner)}"
 
     if isinstance(cond, Term) and cond.functor == "atom_concat":
