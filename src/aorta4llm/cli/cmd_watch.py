@@ -168,23 +168,25 @@ class _Dashboard:
         except OSError:
             return 80, 24
 
-    def _load_achievements(self) -> list[str]:
+    def _load_state(self) -> tuple[list[str], list[dict]]:
+        """Load achievements and exceptions from state."""
         if not self._state_path.exists():
-            return []
+            return [], []
         try:
             state = json.loads(self._state_path.read_text())
         except (json.JSONDecodeError, OSError):
-            return []
+            return [], []
         achievements = []
         for event in state.get("events", []):
             if event.get("type") == "achieved":
                 achievements.extend(event.get("objectives", []))
-        return achievements
+        exceptions = state.get("exceptions", [])
+        return achievements, exceptions
 
     def _render_policy_lines(self, height: int) -> list[str]:
         """Render the policy panel as a list of plain-text lines."""
         lines: list[str] = []
-        achievements = self._load_achievements()
+        achievements, exceptions = self._load_state()
         achieved_set = set(achievements)
 
         lines.append(f"\033[1m{self._spec.get('organization', '?')}\033[0m")
@@ -219,6 +221,28 @@ class _Dashboard:
                 mark = trigger.get("marks", "?")
                 marker = "\033[32m*\033[0m" if mark in achieved_set else "\033[90mo\033[0m"
                 lines.append(f"  {marker} {mark}")
+
+        if exceptions:
+            from aorta4llm.integration.hooks import EXCEPTION_TTL
+            now = time.time()
+            lines.append("")
+            lines.append("\033[4mAllow-once\033[0m")
+            for exc in exceptions:
+                ts = exc.get("ts", 0)
+                remaining = max(0, EXCEPTION_TTL - (now - ts))
+                if remaining <= 0:
+                    continue  # expired
+                path = exc.get("path", "?")
+                uses = exc.get("uses", 0)
+                agent = exc.get("agent", "*")
+                agent_str = f" ({agent})" if agent != "*" else ""
+                # Format remaining time
+                mins = int(remaining // 60)
+                if mins >= 60:
+                    time_str = f"{mins // 60}h{mins % 60:02d}m"
+                else:
+                    time_str = f"{mins}m"
+                lines.append(f"  \033[33m⚑\033[0m {path}{agent_str} [{uses}x, {time_str}]")
 
         return lines[:height]
 

@@ -27,13 +27,21 @@ def run(args):
         state = json.loads(state_path.read_text())
 
     exceptions = state.setdefault("exceptions", [])
-    exception = {
-        "path": args.path,
-        "agent": args.agent,
-        "ts": time.time(),
-        "uses": 1,
-    }
-    exceptions.append(exception)
+    # Merge with existing exception for same path+agent instead of duplicating.
+    existing = next(
+        (e for e in exceptions if e["path"] == args.path and e["agent"] == args.agent),
+        None,
+    )
+    if existing:
+        existing["uses"] += 1
+        existing["ts"] = time.time()
+    else:
+        exceptions.append({
+            "path": args.path,
+            "agent": args.agent,
+            "ts": time.time(),
+            "uses": 1,
+        })
 
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state, indent=2))

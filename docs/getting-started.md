@@ -19,7 +19,7 @@ This creates:
 - `.claude/settings.local.json` — Claude Code hook configuration
 - `.aorta/state.json` — event-sourced state (project-local)
 - `.aorta/events.jsonl` — event log for `aorta watch`
-- `.claude/commands/aorta/permissions.md` and `status.md` — slash commands for agent introspection
+- `.claude/commands/aorta/permissions.md`, `status.md`, and `context.md` — slash commands for agent introspection
 - Registers agent `agent` with scope `src/`
 
 Multiple scopes are supported:
@@ -97,8 +97,16 @@ achievement_triggers:
 # Analyze bash commands for hidden file writes
 bash_analysis: true
 
+# Allow agent to write to the Claude Code memory directory (.claude/memory/)
+allow_memory: true
+
 # Commands that skip bash analysis (read-only, fast path)
 safe_commands: ["pytest", "git status", "git diff", "git log", "npm test"]
+
+# Composite achievements
+counts_as:
+  - when: [tests_passing, lint_clean]
+    marks: quality_verified
 
 # How long a soft block retry window lasts (default: 60)
 soft_block_window: 30
@@ -219,12 +227,44 @@ safe_commands:
 
 Edit `safe_commands` directly in your `.aorta/<template>.yaml`. These are prefix-matched: `"pytest"` covers `pytest tests/ -v`, `"git status"` covers `git status --short`, etc.
 
+## Guardrails
+
+Detect and respond to thrashing patterns:
+
+```yaml
+guardrails:
+  per_file_rewrites:
+    threshold: 5
+    action: hold        # or "warning"
+  failure_rate:
+    threshold: 0.5
+    action: warning
+  bash_commands:
+    threshold: 30
+    action: warning
+```
+
+When a hold triggers, all actions are blocked until `aorta continue` is run.
+
+## Sanctions
+
+Escalate repeated violations:
+
+```yaml
+sanctions:
+  - on_violation_count: 5
+    then:
+      - type: hold
+        message: "5 policy violations — review your approach"
+```
+
 ## Slash commands
 
 `aorta init` creates slash commands that the agent can use during a Claude Code session:
 
 - `/aorta:permissions` — show effective permissions
 - `/aorta:status` — show governance state
+- `/aorta:context` — show governance summary (access map, rules, achievement gates, sanctions, obligations)
 
 These run read-only `aorta` commands. The agent can also run `aorta status`, `aorta permissions`, `aorta explain`, `aorta validate`, and `aorta doctor` directly via Bash — read-only aorta commands are allowed. Only mutating commands (`init`, `reset`, `allow-once`, etc.) are blocked.
 
@@ -252,7 +292,7 @@ Shows the access map with actual read/write status, command restrictions, achiev
 aorta reset
 ```
 
-Clears registered agents, achievements, and events. Use `--keep-events` to preserve the event log. Agents must be re-registered afterward.
+Clears registered agents, achievements, and events. Use `--keep-events` to preserve the event log. Reset auto-re-registers agents from prior state or derives them from the org spec.
 
 ## Watch (live event tail)
 
@@ -263,6 +303,44 @@ aorta watch
 ```
 
 Shows blocks, approvals, registrations, and achievements as they happen. Useful during a Claude Code session.
+
+## Dashboard
+
+Split-panel live view with policy tree and event stream:
+
+```bash
+aorta watch --dashboard
+```
+
+## Dependency graph
+
+Show achievement dependencies as an ASCII graph:
+
+```bash
+aorta status --graph
+```
+
+## Context injection
+
+The agent receives governance rules at session start via the SessionStart hook. Run manually:
+
+```bash
+aorta context
+```
+
+Shows access map, rules, achievement gates (with status), sanctions, and obligations in LLM-friendly format. The `/aorta:context` slash command runs this.
+
+## Replay
+
+Validate policies against real session traces:
+
+```bash
+aorta replay --last                    # replay most recent session
+aorta replay --trace session.jsonl     # replay specific trace
+aorta replay --last --format full      # full output with divergence points
+```
+
+Shows what your policy would have blocked or approved. Distinguishes policy blocks from sanctions and held (counterfactual) events.
 
 ## Re-initializing
 

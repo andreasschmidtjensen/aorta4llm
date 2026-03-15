@@ -179,6 +179,15 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       padding: 24px;
+      position: relative;
+    }
+    .feature-icon {
+      width: 24px;
+      height: 24px;
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      color: var(--border);
     }
     .feature h3 {
       font-size: 1em;
@@ -449,28 +458,54 @@
 
     <div class="features">
       <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><rect x="8" y="12" width="8" height="6" rx="1"/><path d="M12 12v-2"/></svg>
         <h3>File access control</h3>
         <p>Declare paths as read-write, read-only, or no-access. Writes outside scope are blocked before execution. Not suggested against. Blocked.</p>
       </div>
       <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         <h3>Self-protection</h3>
         <p>The agent cannot edit its governance config, cannot delete the hooks, and cannot run <code>aorta reset</code>. The guardrails guard themselves.</p>
       </div>
       <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>
         <h3>Bash analysis</h3>
         <p>Shell commands are analyzed for hidden file writes. <code>cp src/app.py /tmp/leak.py</code> is caught even though the Bash tool itself is allowed.</p>
       </div>
       <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/></svg>
         <h3>Conditional enforcement</h3>
         <p>"Commit only after tests pass" with automatic achievement tracking. Tests pass &rarr; commit unlocked &rarr; file change &rarr; achievement reset.</p>
       </div>
       <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636-2.87L13.637 3.59a1.914 1.914 0 0 0-3.274 0z"/><path d="M12 17h.01"/></svg>
         <h3>Soft blocks</h3>
         <p>Git commit/push require user confirmation. Guards against post-compaction hallucinated commits where the agent acts on stale context.</p>
       </div>
       <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
         <h3>Sensitive content warnings</h3>
         <p>When the agent reads a read-only file, a governance notice tells it not to hardcode values. In testing, Claude refused to embed a database password.</p>
+      </div>
+      <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+        <h3>Guardrails &amp; sanctions</h3>
+        <p>Detect thrashing: repeated failures, file rewrites, runaway bash commands. Violations escalate through warnings to auto-hold. Configurable thresholds per pattern.</p>
+      </div>
+      <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <h3>Context injection</h3>
+        <p>Governance rules are injected into the agent's context at session start via a SessionStart hook. The agent knows the rules before its first action.</p>
+      </div>
+      <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/><line x1="5" x2="5" y1="3" y2="21"/></svg>
+        <h3>Conversation replay</h3>
+        <p>Validate policies against real session traces. <code>aorta replay --last</code> shows what your policy would have blocked, with divergence points where sanctions fire.</p>
+      </div>
+      <div class="feature">
+        <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg>
+        <h3>Achievement workflows</h3>
+        <p>Counts-as rules compose achievements: <code>tests_passing + spec_valid = quality_verified</code>. Cascading dependencies, obligation chains, and automatic reset on file changes.</p>
       </div>
     </div>
   </div>
@@ -628,10 +663,52 @@
 <br><span class="t-prompt">$</span> <span class="t-cmd">aorta allow-once .env</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# one-time exception</span>
 <br><span class="t-prompt">$</span> <span class="t-cmd">aorta dry-run --tool Write --path .env</span> <span class="t-dim"># test offline</span>
 <br><span class="t-prompt">$</span> <span class="t-cmd">aorta doctor</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# verify setup</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta context</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# LLM-friendly governance summary</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta replay --last</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# replay last session against policy</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta status --graph</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# ASCII dependency graph</span>
+<br><span class="t-prompt">$</span> <span class="t-cmd">aorta watch --dashboard</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# split-panel live dashboard</span>
 <br><span class="t-prompt">$</span> <span class="t-cmd">aorta template add test-gate</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# compose templates</span>
 <br><span class="t-prompt">$</span> <span class="t-cmd">aorta protect "*.pem" "*.key"</span> <span class="t-dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# shorthand for no-access</span>
       </div>
     </div>
+  </div>
+</section>
+
+<hr class="sep">
+
+<!-- Visualization -->
+<section>
+  <div class="container">
+    <h2>Policy <span>visualization</span></h2>
+    <p class="section-sub">See your governance policy as a tree, a dependency graph, or a live dashboard.</p>
+
+    <div class="terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot r"></span>
+        <span class="terminal-dot y"></span>
+        <span class="terminal-dot g"></span>
+        <span class="terminal-title">aorta status --graph</span>
+      </div>
+      <div class="terminal-body">
+<span class="t-ok">[*]</span> tests_passing
+<br><span class="t-muted">&nbsp;&nbsp;|</span>
+<br><span class="t-muted">&nbsp;&nbsp;v</span>
+<br><span class="t-ok">[*]</span> spec_valid
+<br><span class="t-muted">&nbsp;&nbsp;|</span>
+<br><span class="t-muted">&nbsp;&nbsp;v</span>
+<br><span class="t-ok">[*]</span> quality_verified
+<br><span class="t-muted">&nbsp;&nbsp;|</span>
+<br><span class="t-muted">&nbsp;&nbsp;v</span>
+<br><span class="t-muted">&nbsp;&nbsp;&nbsp;</span> unlocks: git commit
+<br>
+<br><span class="t-muted">&nbsp;&nbsp;&nbsp;</span> unlocks: git push
+      </div>
+    </div>
+
+    <p style="color: var(--text-muted); margin-top: 16px; font-size: 0.92em;">
+      <code>aorta status --tree</code> shows the full policy as a tree with box-drawing characters.
+      <code>aorta watch --dashboard</code> adds a split-panel view with the policy tree on the left and a live event stream on the right.
+    </p>
   </div>
 </section>
 

@@ -21,6 +21,12 @@ aorta4llm enforces governance at the tool call layer. A YAML spec declares what 
 - **Conditional enforcement**: "Commit only after tests pass" with automatic achievement tracking. Tests pass → achievement granted → commit unlocked → file change → achievement reset.
 - **Soft blocks**: Git commit/push are soft-blocked — the agent must ask the user for confirmation before proceeding. Guards against post-compaction hallucinated commits.
 - **Audit trail**: Every check (approved or blocked) is logged to `.aorta/events.jsonl`. Monitor in real-time with `aorta watch`.
+- **Guardrails & sanctions**: Detect thrashing (repeated failures, file rewrites), escalate violations, auto-hold after configurable thresholds.
+- **Achievement workflows**: Counts-as rules (`tests_passing + spec_valid = quality_verified`), cascading dependencies, obligation chains.
+- **Context injection**: Governance rules injected into agent context at session start via SessionStart hook. Agent knows the rules before its first action.
+- **Conversation replay**: Validate policies against real session traces with `aorta replay`. See what your policy would have done during yesterday's session.
+- **Policy visualization**: Tree view (`aorta status --tree`), dependency graph (`aorta status --graph`), live dashboard (`aorta watch --dashboard`).
+- **Policy packs**: Composable policy modules. `include: [tool-hygiene]` adds norms from a shared pack.
 
 ## See it in action
 
@@ -73,6 +79,7 @@ The access map is the primary interface for file governance. Norms handle comman
 ```yaml
 organization: safe_agent
 bash_analysis: true
+allow_memory: true   # allow agent to write to Claude Code memory
 
 roles:
   agent:
@@ -112,6 +119,7 @@ aorta protect "*.key" "*.pem"    # shorthand for no-access
 
 - **safe-agent** — Single agent with scope, protected paths, readonly paths, soft-blocked git operations
 - **test-gate** — Like safe-agent, plus `git commit` is hard-blocked until `pytest` passes (achievement triggers)
+- **minimal** — Scope-only, no norms or bash analysis
 
 ## How it works
 
@@ -120,6 +128,7 @@ aorta protect "*.key" "*.pem"    # shorthand for no-access
 3. **Claude Code hooks** intercept tool calls, translate them to governance actions, and check permissions before execution
 4. **Prohibitions with variables** (like `write_file(Path)`) are evaluated at check time — the concrete file path binds the variable, propagating through the condition
 5. **Event log** (`.aorta/events.jsonl`) records all checks for auditing and `aorta watch`
+6. **SessionStart hook** injects governance context (access map, rules, achievement gates) into the agent's context before its first action
 
 ## Project structure
 
@@ -138,18 +147,29 @@ src/aorta4llm/
     hooks.py           Claude Code hook handlers + CLI
     events.py          JSONL event logger
   cli/
-    main.py            Unified CLI (aorta init, validate, dry-run)
+    main.py            Unified CLI entry point
     cmd_init.py        Project scaffolding from templates
     cmd_validate.py    Org spec validation
     cmd_dry_run.py     Test governance checks offline
+    cmd_context.py     LLM-friendly governance summary
+    cmd_replay.py      Session trace replay
+    cmd_status.py      State display, tree view, dependency graph
+    cmd_watch.py       Live event tail and dashboard
+    cmd_reset.py       State reset with auto-re-registration
+  replay/
+    trace_parser.py    Parse Claude Code session JSONL traces
+    engine.py          Replay engine for policy validation
   org-specs/
     templates/         Templates for aorta init (safe-agent, test-gate)
+    packs/             Composable policy modules (tool-hygiene)
 tests/
   governance/          Engine, compiler, terms, service tests
   integration/         Hook, access map, soft block tests
   cli/                 CLI command tests
+  replay/              Trace parser and replay engine tests
 docs/
   getting-started.md   Hands-on setup and usage guide
+  index.html           Documentation site
 ```
 
 ## Architecture and theory

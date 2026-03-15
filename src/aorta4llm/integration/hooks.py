@@ -47,6 +47,9 @@ from aorta4llm.integration.events import log_event
 # Prevents agents from modifying their own governance infrastructure.
 PROTECTED_PATHS = (".aorta/", ".claude/")
 
+# Allow-once exceptions expire after this many seconds (4 hours).
+EXCEPTION_TTL = 4 * 60 * 60
+
 # Mapping from Claude Code tool names to governance action names
 TOOL_ACTION_MAP = {
     "Write": "write_file",
@@ -296,6 +299,7 @@ class GovernanceHook:
         self._bash_analysis = extras[1]
         self._safe_commands = extras[2]
         self._allow_memory: bool = extras[8]
+        self._no_access_patterns: frozenset[str] = extras[9]
         self._events: list[dict] = []
         self._replaying = False
         self._soft_block_cache: dict[str, float] = {}  # command_hash -> timestamp
@@ -314,7 +318,7 @@ class GovernanceHook:
         self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
 
-    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict, list[dict], list[dict], bool]:
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict, list[dict], list[dict], bool, frozenset[str]]:
         """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, sensitive paths, guardrails, counts_as, sanctions, and allow_memory."""
         try:
             with open(org_spec_path) as f:
@@ -327,6 +331,15 @@ class GovernanceHook:
                 if level in ("read-only", "no-access")
             )
             guardrails = spec.get("guardrails", {})
+            no_access_paths = set(
+                path for path, level in spec.get("access", {}).items()
+                if level == "no-access"
+            )
+            # Protected norms also block reads
+            for norm in spec.get("norms", []):
+                if norm.get("type") == "protected":
+                    no_access_paths.update(norm.get("paths", []))
+            no_access = frozenset(no_access_paths)
             return (
                 spec.get("achievement_triggers", []),
                 bool(spec.get("bash_analysis", False)),
@@ -337,9 +350,10 @@ class GovernanceHook:
                 spec.get("counts_as", []),
                 spec.get("sanctions", []),
                 bool(spec.get("allow_memory", False)),
+                no_access,
             )
         except Exception:
-            return [], False, frozenset(), 60, frozenset(), {}, [], [], False
+            return [], False, frozenset(), 60, frozenset(), {}, [], [], False, frozenset()
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state.
@@ -571,11 +585,13 @@ class GovernanceHook:
 
         # Check for allow-once exceptions before norm evaluation.
         path = params.get("path", "")
-        if path and self._check_exception(path, agent_id):
+        exc_result = self._check_exception(path, agent_id, action) if path else ""
+        if exc_result:
+            reason = "allow-once exception" if exc_result == "consumed" else "allow-once (read, not consumed)"
             log({
                 "type": "check", "agent": agent_id, "role": role,
                 "action": action, "path": path,
-                "decision": "approve", "reason": "allow-once exception",
+                "decision": "approve", "reason": reason,
             })
             return {"decision": "approve"}
 
@@ -1179,11 +1195,22 @@ class GovernanceHook:
 
         return "\n".join(lines)
 
-    def _check_exception(self, path: str, agent: str) -> bool:
+    def _check_exception(self, path: str, agent: str,
+                         action: str = "write_file") -> str:
         """Check if an allow-once exception exists for this path+agent.
 
-        If found, decrements uses and removes when exhausted. Returns True if allowed.
+        Returns:
+            "consumed" — exception matched and used up
+            "matched" — exception matched but not consumed (read of non-no-access)
+            "" — no match
         """
+        now = time.time()
+        expired = [e for e in self._exceptions if now - e.get("ts", 0) > EXCEPTION_TTL]
+        if expired:
+            for e in expired:
+                self._exceptions.remove(e)
+            self._save_state()
+
         for exc in self._exceptions:
             if exc["path"] != path:
                 # Check if path starts with exception path (prefix match)
@@ -1191,11 +1218,27 @@ class GovernanceHook:
                     continue
             if exc["agent"] != "*" and exc["agent"] != agent:
                 continue
+            # For reads, only consume if the path is no-access.
+            if action == "read_file" and not self._is_no_access_path(path):
+                return "matched"  # allow but don't consume
             exc["uses"] -= 1
             if exc["uses"] <= 0:
                 self._exceptions.remove(exc)
             self._save_state()
-            return True
+            return "consumed"
+        return ""
+
+    def _is_no_access_path(self, path: str) -> bool:
+        """Check if a path matches a no-access entry in the access map."""
+        import fnmatch
+        for pattern in self._no_access_patterns:
+            if any(c in pattern for c in "*?["):
+                if fnmatch.fnmatch(path, pattern):
+                    return True
+            else:
+                prefix = pattern.rstrip("/")
+                if path == prefix or path.startswith(prefix + "/") or path.startswith(prefix):
+                    return True
         return False
 
     def _handle_soft_block(self, reason: str, params: dict,
