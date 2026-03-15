@@ -205,6 +205,15 @@ def _format_achievement_notice(achieved: list[str]) -> str:
     return "[ACHIEVEMENT] Unlocked: " + ", ".join(achieved)
 
 
+def _format_piped_notice(skipped: list[str]) -> str:
+    """Format a notice when piped commands skip achievement triggers."""
+    marks = ", ".join(skipped)
+    return (
+        f"[NOTICE] Command matched trigger for {marks} but was piped — "
+        f"exit code is unreliable. Re-run without piping to earn the achievement."
+    )
+
+
 def _default_state_path(org_spec_path: str | Path) -> Path:
     """Return .aorta/state.json relative to the org spec's directory.
 
@@ -614,9 +623,11 @@ class GovernanceHook:
                 )
 
         # Reset achievements when a file write is approved (e.g., invalidate tests_passing).
+        reset_marks: list[str] = []
         if action == "write_file" and self._reset_on_file_change:
             for mark in list(self._reset_on_file_change):
                 if self._service.clear_achievement(mark):
+                    reset_marks.append(mark)
                     # Remove from persisted events too
                     self._events = [
                         e for e in self._events
@@ -628,7 +639,13 @@ class GovernanceHook:
                     self._invalidate_counts_as_dependents(mark)
             self._save_state()
 
-        return {"decision": "approve"}
+        result: dict = {"decision": "approve"}
+        if reset_marks:
+            result["_reset_notice"] = (
+                "[ACHIEVEMENT RESET] " + ", ".join(reset_marks)
+                + " reset (file changed) — re-run to re-achieve"
+            )
+        return result
 
     def post_tool_use(self, context: dict, agent: str | None = None) -> dict:
         """Handle PostToolUse hook.
@@ -676,12 +693,19 @@ class GovernanceHook:
 
         achieved = []
         cleared = []
+        piped_skipped: list[str] = []  # trigger marks skipped due to piping
         for trigger in self._triggers:
             if trigger.get("tool") != tool_name:
                 continue
             required_exit = trigger.get("exit_code")
             if required_exit is not None:
                 if cmd_is_piped:
+                    # Check if command pattern would have matched
+                    pattern = trigger.get("command_pattern", "")
+                    if pattern:
+                        cmd = _normalize_git_cmd(raw_cmd)
+                        if re.search(pattern, cmd) and "marks" in trigger:
+                            piped_skipped.append(trigger["marks"])
                     continue  # exit code is unreliable for piped commands
                 if exit_code != required_exit:
                     continue
@@ -751,15 +775,16 @@ class GovernanceHook:
         if result:
             if newly_achieved:
                 result["_achievement_notice"] = _format_achievement_notice(newly_achieved)
+            if piped_skipped:
+                result["_piped_notice"] = _format_piped_notice(piped_skipped)
             return result
 
+        result: dict = {"status": "ok"}
         if newly_achieved:
-            return {
-                "status": "ok",
-                "_achievement_notice": _format_achievement_notice(newly_achieved),
-            }
-
-        return {"status": "ok"}
+            result["_achievement_notice"] = _format_achievement_notice(newly_achieved)
+        if piped_skipped:
+            result["_piped_notice"] = _format_piped_notice(piped_skipped)
+        return result
 
     def _get_achieved_set(self) -> set[str]:
         """Build the set of currently achieved objectives from the event log."""
@@ -1211,7 +1236,10 @@ def main():
     elif args.command == "pre-tool-use":
         context = json.loads(sys.stdin.read())
         result = hook.pre_tool_use(context, agent=args.agent, project_cwd=args.cwd)
+        reset_notice = result.pop("_reset_notice", None)
         _respond_hook(result)
+        if reset_notice:
+            print(reset_notice, file=sys.stderr, flush=True)
 
     elif args.command == "post-tool-use":
         context = json.loads(sys.stdin.read())
@@ -1219,14 +1247,20 @@ def main():
         warning = result.pop("_sensitive_warning", None)
         guardrail_warning = result.pop("_guardrail_warning", None)
         achievement = result.pop("_achievement_notice", None)
+        piped = result.pop("_piped_notice", None)
         if warning:
             print(warning, file=sys.stderr, flush=True)
             sys.exit(2)
         if guardrail_warning:
             print(guardrail_warning, file=sys.stderr, flush=True)
             sys.exit(2)
+        notices = []
         if achievement:
-            print(achievement, file=sys.stderr, flush=True)
+            notices.append(achievement)
+        if piped:
+            notices.append(piped)
+        if notices:
+            print("\n".join(notices), file=sys.stderr, flush=True)
             sys.exit(2)
         _respond(result)
 

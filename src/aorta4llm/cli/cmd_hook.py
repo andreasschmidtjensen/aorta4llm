@@ -45,18 +45,27 @@ def run(args):
     elif args.hook_command == "pre-tool-use":
         context = json.loads(sys.stdin.read())
         result = hook.pre_tool_use(context, agent=agent, project_cwd=args.cwd)
+        reset_notice = result.pop("_reset_notice", None)
         _respond_hook(result)
+        if reset_notice:
+            print(reset_notice, file=sys.stderr, flush=True)
 
     elif args.hook_command == "post-tool-use":
         context = json.loads(sys.stdin.read())
         result = hook.post_tool_use(context, agent=agent)
         warning = result.pop("_sensitive_warning", None)
         achievement = result.pop("_achievement_notice", None)
+        piped = result.pop("_piped_notice", None)
+        notices = []
         if warning:
             print(warning, file=sys.stderr, flush=True)
             sys.exit(2)
         if achievement:
-            print(achievement, file=sys.stderr, flush=True)
+            notices.append(achievement)
+        if piped:
+            notices.append(piped)
+        if notices:
+            print("\n".join(notices), file=sys.stderr, flush=True)
             sys.exit(2)
         print(json.dumps(result), flush=True)
 
