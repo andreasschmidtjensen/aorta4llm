@@ -109,7 +109,7 @@ _TOUCH_RE = re.compile(r"\btouch\s+(" + _PATH + r")")
 
 # Commands that look like writes but don't create user-visible file changes.
 _SAFE_WRITE_PREFIXES = [
-    "git commit", "git push", "git stash", "git tag",
+    "git add", "git commit", "git push", "git stash", "git tag",
     "npm install", "pip install", "uv pip install", "uv add",
 ]
 
