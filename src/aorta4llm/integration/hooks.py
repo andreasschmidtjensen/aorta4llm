@@ -324,11 +324,19 @@ class GovernanceHook:
             return [], False, frozenset(), 60, frozenset(), {}, [], []
 
     def _replay_state(self):
-        """Replay events from state file to reconstruct service state."""
+        """Replay events from state file to reconstruct service state.
+
+        Acquires a shared lock to wait for any concurrent write to finish.
+        """
+        import fcntl
         if not self._state_path.exists():
             return
         self._replaying = True
-        state = json.loads(self._state_path.read_text())
+        lock_path = self._state_path.with_suffix(".lock")
+        lock_path.touch(exist_ok=True)
+        with open(lock_path) as lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_SH)
+            state = json.loads(self._state_path.read_text())
         self._events = state.get("events", [])
         self._soft_block_cache = state.get("soft_blocks", {})
         self._exceptions = state.get("exceptions", [])
@@ -361,7 +369,13 @@ class GovernanceHook:
         self._replaying = False
 
     def _save_state(self):
-        """Persist events, soft block timestamps, exceptions, and guardrails state."""
+        """Persist events, soft block timestamps, exceptions, and guardrails state.
+
+        Uses file locking to prevent concurrent hook processes from
+        clobbering each other's writes (e.g. PostToolUse writing
+        achievements while PreToolUse reads state for the next action).
+        """
+        import fcntl
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
         state: dict = {
             "events": self._events,
@@ -382,7 +396,10 @@ class GovernanceHook:
             state["bash_command_count"] = self._bash_command_count
         if self._violation_count:
             state["violation_count"] = self._violation_count
-        self._state_path.write_text(json.dumps(state, indent=2))
+        lock_path = self._state_path.with_suffix(".lock")
+        with open(lock_path, "w") as lock_fd:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            self._state_path.write_text(json.dumps(state, indent=2))
 
     def clear_transient_state(self):
         """Clear exceptions and soft block cache. Called during reinit."""
