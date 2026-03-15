@@ -686,7 +686,7 @@ $ aorta replay --spec .aorta/safe-agent.yaml --trace <path>  # specific session
 
 ---
 
-## Extension 16: Allow memory writes
+## Extension 16: Allow memory writes (done)
 
 **Problem:** Claude Code has a persistent memory system at `~/.claude/projects/<encoded-project-path>/memory/`. Agents use it to store user preferences, feedback, and project context across conversations. But this path is outside the project directory, so aorta's scope check blocks it. The agent can't build up memory without `allow-once` exceptions for every write.
 
@@ -735,9 +735,9 @@ access:
 | ~~15~~ | ~~Policy visualization, level 2: dashboard (#13)~~ | done |
 | ~~16~~ | ~~Policy visualization, level 3: graph (#13)~~ | done |
 | ~~17~~ | ~~Context injection via skill description (#15)~~ | done |
-| 18 | Allow memory writes (#16) | — |
+| ~~18~~ | ~~Allow memory writes (#16)~~ | done |
 
-20 of 24 priorities are done. Remaining: #8 (post-write content validation), #10 (workflow phases), #11 (scope drift), #12 (tool output redaction), #18 (allow memory writes).
+21 of 24 priorities are done. Remaining: #8 (post-write content validation), #10 (workflow phases), #11 (scope drift), #12 (tool output redaction).
 
 ---
 

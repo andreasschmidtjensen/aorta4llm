@@ -205,6 +205,22 @@ def _format_achievement_notice(achieved: list[str]) -> str:
     return "[ACHIEVEMENT] Unlocked: " + ", ".join(achieved)
 
 
+def _memory_path_prefix() -> str:
+    """Compute the Claude Code memory directory for the current project.
+
+    Claude Code encodes the cwd by replacing all non-alphanumeric chars
+    with '-'. The leading '-' from the initial '/' is preserved.
+    """
+    encoded = re.sub(r"[^a-zA-Z0-9]", "-", os.getcwd())
+    return str(Path.home() / ".claude" / "projects" / encoded / "memory")
+
+
+def _is_memory_path(path: str) -> bool:
+    """Check if an absolute path is inside the Claude Code memory directory."""
+    prefix = _memory_path_prefix()
+    return path.startswith(prefix + "/") or path == prefix
+
+
 def _format_piped_notice(skipped: list[str]) -> str:
     """Format a notice when piped commands skip achievement triggers."""
     marks = ", ".join(skipped)
@@ -279,6 +295,7 @@ class GovernanceHook:
         self._sanctions: list[dict] = extras[7]
         self._bash_analysis = extras[1]
         self._safe_commands = extras[2]
+        self._allow_memory: bool = extras[8]
         self._events: list[dict] = []
         self._replaying = False
         self._soft_block_cache: dict[str, float] = {}  # command_hash -> timestamp
@@ -297,8 +314,8 @@ class GovernanceHook:
         self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
 
-    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict, list[dict], list[dict]]:
-        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, sensitive paths, guardrails, counts_as, and sanctions."""
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict, list[dict], list[dict], bool]:
+        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, sensitive paths, guardrails, counts_as, sanctions, and allow_memory."""
         try:
             with open(org_spec_path) as f:
                 spec = yaml.safe_load(f)
@@ -319,9 +336,10 @@ class GovernanceHook:
                 guardrails,
                 spec.get("counts_as", []),
                 spec.get("sanctions", []),
+                bool(spec.get("allow_memory", False)),
             )
         except Exception:
-            return [], False, frozenset(), 60, frozenset(), {}, [], []
+            return [], False, frozenset(), 60, frozenset(), {}, [], [], False
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state.
@@ -501,19 +519,31 @@ class GovernanceHook:
 
         params = {}
         raw_command = ""
+        abs_path = ""  # original absolute path before relativization
         if tool_name == "Bash":
             raw_command = tool_input.get("command", "")
             # Normalize git commands for pattern matching (strips -C <path> etc.)
             params["command"] = _normalize_git_cmd(raw_command)
         else:
-            raw_path = tool_input.get("file_path") or tool_input.get("path") or ""
+            abs_path = tool_input.get("file_path") or tool_input.get("path") or ""
             raw_path = _make_relative(
-                raw_path, self._org_spec_path,
+                abs_path, self._org_spec_path,
                 project_cwd=project_cwd,
                 context_cwd=context.get("cwd", ""),
             )
             if raw_path:
                 params["path"] = raw_path
+
+        # Allow memory writes when allow_memory is set.
+        # Check before PROTECTED_PATHS since memory lives under ~/.claude/.
+        if (self._allow_memory and action == "write_file"
+                and abs_path and _is_memory_path(abs_path)):
+            log({
+                "type": "check", "agent": agent_id, "role": role,
+                "action": action, "path": params.get("path", abs_path),
+                "decision": "approve", "reason": "memory write allowed",
+            })
+            return {"decision": "approve"}
 
         # Hard-block writes to governance infrastructure, regardless of org spec.
         if action == "write_file" and params.get("path"):
@@ -612,6 +642,9 @@ class GovernanceHook:
 
             analysis = analyze_bash_command(raw_command, extra_safe=self._safe_commands)
             for write_path in analysis.writes:
+                # Skip memory paths when allow_memory is set.
+                if self._allow_memory and _is_memory_path(write_path):
+                    continue
                 # Normalize absolute paths to relative before scope checking.
                 write_path = _make_relative(
                     write_path, self._org_spec_path,
