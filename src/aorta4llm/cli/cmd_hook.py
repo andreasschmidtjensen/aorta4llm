@@ -51,8 +51,12 @@ def run(args):
         context = json.loads(sys.stdin.read())
         result = hook.post_tool_use(context, agent=agent)
         warning = result.pop("_sensitive_warning", None)
+        achievement = result.pop("_achievement_notice", None)
         if warning:
             print(warning, file=sys.stderr, flush=True)
+            sys.exit(2)
+        if achievement:
+            print(achievement, file=sys.stderr, flush=True)
             sys.exit(2)
         print(json.dumps(result), flush=True)
 

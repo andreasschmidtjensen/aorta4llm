@@ -396,7 +396,8 @@ class TestPostToolUseAchievements:
             },
             agent="dev",
         )
-        assert result == {"status": "ok"}
+        assert result["status"] == "ok"
+        assert "[ACHIEVEMENT] Unlocked: tests_passing" in result["_achievement_notice"]
 
         # Achievement should now be in the engine state
         obls = hook._service.get_obligations("dev", "agent")

@@ -198,6 +198,13 @@ def _display_action(action: str, path: str) -> str:
     return name
 
 
+def _format_achievement_notice(achieved: list[str]) -> str:
+    """Format a list of newly achieved objectives for agent notification."""
+    if len(achieved) == 1:
+        return f"[ACHIEVEMENT] Unlocked: {achieved[0]}"
+    return "[ACHIEVEMENT] Unlocked: " + ", ".join(achieved)
+
+
 def _default_state_path(org_spec_path: str | Path) -> Path:
     """Return .aorta/state.json relative to the org spec's directory.
 
@@ -665,6 +672,8 @@ class GovernanceHook:
         raw_cmd = tool_input.get("command", "")
         cmd_is_piped = _command_is_piped(raw_cmd) if tool_name == "Bash" else False
 
+        achieved_before = self._get_achieved_set()
+
         achieved = []
         cleared = []
         for trigger in self._triggers:
@@ -733,10 +742,22 @@ class GovernanceHook:
         if achieved or cleared:
             self._evaluate_counts_as(agent_id, role)
 
+        # Build achievement notice for newly achieved objectives.
+        achieved_after = self._get_achieved_set()
+        newly_achieved = sorted(achieved_after - achieved_before)
+
         # Guardrails tracking.
         result = self._check_guardrails(context, agent_id)
         if result:
+            if newly_achieved:
+                result["_achievement_notice"] = _format_achievement_notice(newly_achieved)
             return result
+
+        if newly_achieved:
+            return {
+                "status": "ok",
+                "_achievement_notice": _format_achievement_notice(newly_achieved),
+            }
 
         return {"status": "ok"}
 
@@ -1197,11 +1218,15 @@ def main():
         result = hook.post_tool_use(context, agent=args.agent)
         warning = result.pop("_sensitive_warning", None)
         guardrail_warning = result.pop("_guardrail_warning", None)
+        achievement = result.pop("_achievement_notice", None)
         if warning:
             print(warning, file=sys.stderr, flush=True)
             sys.exit(2)
         if guardrail_warning:
             print(guardrail_warning, file=sys.stderr, flush=True)
+            sys.exit(2)
+        if achievement:
+            print(achievement, file=sys.stderr, flush=True)
             sys.exit(2)
         _respond(result)
 
