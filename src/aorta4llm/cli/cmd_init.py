@@ -60,6 +60,25 @@ def _merge_hooks(old_hooks: dict, new_aorta_hooks: dict) -> dict:
     return merged
 
 
+def _generate_description(spec: dict) -> str:
+    """Build a dense one-liner from a resolved spec for slash command description."""
+    parts = []
+    access = spec.get("access", {})
+    rw = [k for k, v in access.items() if v == "read-write"]
+    no = [k for k, v in access.items() if v == "no-access"]
+    if rw:
+        parts.append(f"scope: {', '.join(rw)}")
+    if no:
+        parts.append(f"no-access: {', '.join(no)}")
+    triggers = spec.get("achievement_triggers", [])
+    gates = [n for n in spec.get("norms", []) if n.get("type") == "required_before"]
+    if gates:
+        parts.append(f"{len(gates)} gate(s)")
+    if triggers:
+        parts.append(f"{len(triggers)} achievement trigger(s)")
+    return "Governance: " + "; ".join(parts) if parts else "Governance context"
+
+
 def add_parser(subparsers):
     p = subparsers.add_parser("init", help="Initialize governance for this project")
     p.add_argument("--template", help="Template name (safe-agent, test-gate, or minimal)")
@@ -196,6 +215,7 @@ def run(args):
     agent_name = "agent"
     pre_cmd = f"aorta hook pre-tool-use --org-spec {spec_rel} --agent {agent_name} --events-path {events_rel}"
     post_cmd = f"aorta hook post-tool-use --org-spec {spec_rel} --agent {agent_name} --events-path {events_rel}"
+    session_cmd = f"aorta hook session-start --org-spec {spec_rel} --agent {agent_name} --events-path {events_rel}"
 
     # Write tools matcher — add Read/Glob/Grep if --strict or protected/no-access entries exist
     has_protected = any(n.get("type") == "protected" for n in spec.get("norms", []))
@@ -208,6 +228,9 @@ def run(args):
     has_sensitive = any(v in ("read-only", "no-access") for v in spec.get("access", {}).values())
 
     hooks_config: dict = {
+        "SessionStart": [{
+            "hooks": [{"type": "command", "command": session_cmd}],
+        }],
         "PreToolUse": [{
             "matcher": write_matcher,
             "hooks": [{"type": "command", "command": pre_cmd}],
@@ -313,6 +336,14 @@ def run(args):
     (commands_dir / "status.md").write_text(
         f"Run `aorta status --org-spec {spec_rel}` and show the output.\n"
     )
+    # Context command with description as first line
+    from aorta4llm.governance.compiler import _resolve_includes
+    resolved = _resolve_includes(dict(spec))
+    description = _generate_description(resolved)
+    (commands_dir / "context.md").write_text(
+        f"{description}\n\n"
+        f"Run `aorta context --org-spec {spec_rel}` and show the output.\n"
+    )
     print(f"Created slash commands in {commands_dir}")
 
     # 8. Summary.
@@ -321,7 +352,7 @@ def run(args):
     print(f"  Hooks:     {settings_path}")
     print(f"  Events:    {events_rel}")
     print(f"  Agent:     {agent_name} (role: {role}, scope: {scope_str})")
-    print(f"  Commands:  /aorta:permissions, /aorta:status")
+    print(f"  Commands:  /aorta:permissions, /aorta:status, /aorta:context")
     if needs_post:
         print(f"  PostToolUse hooks enabled (achievement triggers detected)")
 

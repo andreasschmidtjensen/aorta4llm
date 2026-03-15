@@ -19,6 +19,7 @@ The AORTA framework (Jensen, 2015) defines a much richer set of organizational c
 | PostToolUse | Achievement triggers (path, output, negative) | Obligation fulfillment |
 | PostToolUse | Sensitive content warning | Prompt-level nudge |
 | PostToolUse | Guardrails (failure rate, budgets) | Monitoring + sanctions |
+| PreToolUse | Violation tracking + sanctions | Sanctions (escalation) |
 | System prompt | Obligation injection | OG phase (partial) |
 
 ---
@@ -182,30 +183,27 @@ State transitions are logic-driven, not LLM-decided.
 
 ---
 
-## Extension 7: Sanctions and violation cascades
+## Extension 7: Sanctions and violation cascades (done)
 
 **Problem:** Norm violations are logged but have no consequences. The agent doesn't know it violated, and there's no repair mechanism.
 
-**Clarification:** For hard-blocked actions (write outside scope), the action is *prevented* — there's no violation to sanction because the write never happens. Sanctions apply to:
-- **Soft-block overrides** — agent confirmed a soft-blocked action but shouldn't have
-- **Obligation violations** — agent failed to fulfill an obligation by its deadline
-- **Detected-after-the-fact issues** — post-write content validation finds leaked secrets (Extension 1)
-- **Behavioral threshold breaches** — thrashing detected (Extension 4), budget exceeded (Extension 2), scope drift (Extension 3)
+Implemented with violation tracking and configurable sanction rules:
 
-**Approach:** Sanctions are triggered obligations. When a violation is recorded, secondary norms activate:
+- **Violations**: Hard blocks and confirmed soft blocks increment a violation counter. Each violation is logged as an event.
+- **Sanctions**: `on_violation_count: N` rules fire when the counter reaches the threshold. Consequences: `obliged` (create obligation) or `hold` (activate hold, blocking all actions).
+- **Reset**: Violation count resets when a sanction fires (clean slate after consequences), and on `aorta continue` / `aorta reset`.
+- Named violations (`on_violation: leaked_secret`) deferred until typed violation sources exist (e.g., post-write content validation).
 
 ```yaml
 sanctions:
-  - on_violation: leaked_secret
-    then:
-      - type: obliged
-        objective: remove_leaked_content
   - on_violation_count: 3
     then:
-      - type: forbidden
-        objective: write_file(Path)
-        severity: hard
-        message: "Too many violations. Writes blocked until user intervenes."
+      - type: obliged
+        objective: review_approach
+  - on_violation_count: 5
+    then:
+      - type: hold
+        message: "Too many violations. Review with user."
 ```
 
 Combined with the obligation gate, this creates accountability: violation → obligation → must resolve before committing.
@@ -251,7 +249,7 @@ Combined with counts-as rules (Extension 6), this enables: "model file written �
 
 ---
 
-## Extension 9: Checkpoint/rollback
+## Extension 9: Checkpoint/rollback (done — configuration pattern, no new code)
 
 **Problem:** Before destructive operations, there's no safety net.
 
@@ -482,7 +480,7 @@ Extending `aorta explain` to show "this norm came from pack X" or "this norm was
 
 ---
 
-## Extension 13: Policy visualization (TUI)
+## Extension 13: Policy visualization (TUI) (level 1 done, level 2 done, level 3 done)
 
 **Problem:** As org specs grow — access maps, norms, achievements, packs, counts-as rules — understanding the effective policy requires reading YAML and mentally compiling it. Users need a quick way to see what's active, what's blocking what, and where things stand.
 
@@ -558,35 +556,7 @@ Answers "why is my commit blocked?" by tracing the chain visually. Most useful f
 
 ---
 
-## Implementation order
-
-| Priority | Extension | Depends on |
-|----------|-----------|------------|
-| ~~0~~ | ~~`src/` layout refactor~~ | done |
-| ~~1~~ | ~~Custom block messages (#11)~~ | done |
-| ~~2~~ | ~~Policy packs (#12)~~ | done |
-| ~~2a~~ | ~~`aorta include` CLI command (#12)~~ | done |
-| ~~3~~ | ~~Policy visualization, level 1: tree (#13)~~ | done |
-| ~~4~~ | ~~Thrashing detection + behavioral budgets (#4, #2)~~ | done — unified guardrails system |
-| ~~5~~ | ~~Richer triggers (#8)~~ | done |
-| ~~6~~ | ~~Obligation gate (`all_obligations_fulfilled`)~~ | done |
-| ~~6a~~ | ~~`aorta status` shows active obligations~~ | done |
-| ~~7~~ | ~~Counts-as rules (#6)~~ | done |
-| 8 | Post-write content validation (#1) | #6 (creates obligations) |
-| 9 | Sanctions (#7) | #6 |
-| 10 | Workflow phases (#10) | #7, #5 |
-| 11 | Scope drift (#3) | #6 |
-| 12 | Tool output redaction PoC (#5) | — |
-| 13 | Checkpoint/rollback (#9) | #5 (just uses existing required_before) |
-| 14 | Conversation replay harness (#14) | — (PreToolUse exact, PostToolUse approximate) |
-| 15 | Policy visualization, level 2: dashboard (#13) | #3 |
-| 16 | Policy visualization, level 3: graph (#13) | #7 (needs counts-as/obligations to visualize) |
-
-The first eight priorities (#11, #12, #13-L1, #4+#2, #8, #6, #6a, #7) are done. Counts-as rules evaluate after each achievement change in `post_tool_use`, cascading until stable (A+B→C, C→D). Rules can `marks` new achievements or `creates_obligation` with optional deadline. Validator supports `counts_as` section. The replay harness (#14) can be built at any time — it has no dependencies on other extensions and serves as a validation tool for all of them.
-
----
-
-## Extension 14: Conversation replay harness
+## Extension 14: Conversation replay harness (done)
 
 **Problem:** Testing AORTA policies against real agent behavior requires running an actual Claude Code session. There's no way to ask "what would this policy have done during yesterday's conversation?" or to validate new norms, thresholds, and extensions against real traces without deploying them live.
 
@@ -682,6 +652,95 @@ $ aorta replay --spec .aorta/safe-agent.yaml --trace <path>  # specific session
 
 ---
 
+## Extension 15: Context injection via skill description (done)
+
+**Problem:** The agent doesn't know the governance rules before its first action. Hooks will block violations, but the agent wastes turns hitting walls. We need the rules in the LLM's context *before* it acts.
+
+**Constraint:** Claude Code only loads skill *descriptions* into the system prompt for free. Full skill content loads only when invoked (confirmed via [skills docs](https://code.claude.com/docs/en/skills)). So the description is the only zero-cost context.
+
+**Approach:** `aorta init` generates a skill file at `.claude/commands/aorta/context.md` with:
+
+1. **Description (first line):** A dense summary of the effective governance rules, derived from the org spec at init time. This is always in the system prompt (~50-100 tokens). Example:
+
+   ```
+   AORTA governance active. Write scope: src/, tests/, docs/. No access: .env, secrets/, *.key, *.pem. git commit/push blocked until quality_verified (tests_passing + spec_valid). Run for full live state.
+   ```
+
+2. **Body:** Instruction to run `aorta context` for live state (achievements, holds, obligations, violation count). This loads only when the skill is invoked.
+
+**`aorta context` CLI command:** Reads the org spec and current state, outputs a human-readable governance summary. Covers access map, norms, achievement gates, sanctions, current holds/obligations. Added to `_SAFE_AORTA_SUBCOMMANDS` so the agent can run it.
+
+**Staleness:** The description is a static snapshot from `aorta init` / `--reinit` time. Skills are not reloaded mid-session (only `--add-dir` skills have live change detection). This means:
+- Between sessions: `aorta init --reinit` regenerates the description. Could also regenerate on spec file changes via a hook.
+- Within a session: the baked description may be stale if the spec changes. The `aorta context` command gives live state as a fallback.
+
+**Hybrid approach:** Static rules in the description (always visible) + dynamic state via the command (on demand). The agent knows the rules upfront and can check current state when needed.
+
+**Trade-offs:**
+- Pro: Agent sees constraints before its first action — no wasted turns
+- Pro: Lives in a place aorta controls (`.claude/commands/aorta/`), no CLAUDE.md editing
+- Pro: Already-established pattern alongside `/aorta:status` and `/aorta:permissions`
+- Con: Description is stale if spec changes without reinit
+- Con: Agent must actively call the skill for live state (achievements, holds)
+- Con: Overlap with `aorta status` and `aorta permissions` — `context` is the LLM-optimized view
+
+---
+
+## Extension 16: Allow memory writes
+
+**Problem:** Claude Code has a persistent memory system at `~/.claude/projects/<encoded-project-path>/memory/`. Agents use it to store user preferences, feedback, and project context across conversations. But this path is outside the project directory, so aorta's scope check blocks it. The agent can't build up memory without `allow-once` exceptions for every write.
+
+**Approach:** A boolean `allow_memory: true` in the org spec. When set, the hook derives the memory path from the current working directory and whitelists writes to it.
+
+```yaml
+organization: my_project
+allow_memory: true
+access:
+  src/: read-write
+  tests/: read-write
+```
+
+**Path derivation:** Claude Code encodes the project path by replacing `/` with `-`. For a project at `/Users/alice/workspace/myapp`, the memory directory is `~/.claude/projects/-Users-alice-workspace-myapp/memory/`. The hook already knows `cwd` — it computes the memory path and adds it to the allowed write set before scope checking.
+
+**What it allows:** Only writes to the `memory/` subdirectory, not the entire `~/.claude/projects/<project>/` directory (which contains session traces, settings, and other files the agent shouldn't touch).
+
+**Implementation:**
+1. Validator: accept `allow_memory` as an optional boolean
+2. Compiler: pass `allow_memory` through to the compiled spec
+3. Hook layer: when `allow_memory` is true, compute the memory path from `cwd` and skip scope checks for writes targeting that directory
+
+---
+
+## Implementation order
+
+| Priority | Extension | Depends on |
+|----------|-----------|------------|
+| ~~0~~ | ~~`src/` layout refactor~~ | done |
+| ~~1~~ | ~~Custom block messages (#11)~~ | done |
+| ~~2~~ | ~~Policy packs (#12)~~ | done |
+| ~~2a~~ | ~~`aorta include` CLI command (#12)~~ | done |
+| ~~3~~ | ~~Policy visualization, level 1: tree (#13)~~ | done |
+| ~~4~~ | ~~Thrashing detection + behavioral budgets (#4, #2)~~ | done — unified guardrails system |
+| ~~5~~ | ~~Richer triggers (#8)~~ | done |
+| ~~6~~ | ~~Obligation gate (`all_obligations_fulfilled`)~~ | done |
+| ~~6a~~ | ~~`aorta status` shows active obligations~~ | done |
+| ~~7~~ | ~~Counts-as rules (#6)~~ | done |
+| 8 | Post-write content validation (#1) | #6 (creates obligations) |
+| ~~9~~ | ~~Sanctions (#7)~~ | done |
+| 10 | Workflow phases (#10) | #7, #5 |
+| 11 | Scope drift (#3) | #6 |
+| 12 | Tool output redaction PoC (#5) | — |
+| ~~13~~ | ~~Checkpoint/rollback (#9)~~ | done — configuration pattern, no new code |
+| ~~14~~ | ~~Conversation replay harness (#14)~~ | done |
+| ~~15~~ | ~~Policy visualization, level 2: dashboard (#13)~~ | done |
+| ~~16~~ | ~~Policy visualization, level 3: graph (#13)~~ | done |
+| ~~17~~ | ~~Context injection via skill description (#15)~~ | done |
+| 18 | Allow memory writes (#16) | — |
+
+20 of 24 priorities are done. Remaining: #8 (post-write content validation), #10 (workflow phases), #11 (scope drift), #12 (tool output redaction), #18 (allow memory writes).
+
+---
+
 ## Codebase readiness
 
 ### What works well
@@ -693,12 +752,6 @@ $ aorta replay --spec .aorta/safe-agent.yaml --trace <path>  # specific session
 ### What needs attention
 - ~~**`src/` layout**: Required for dogfooding and cleaner scope management~~ (done)
 - ~~**Hook state**: Needs a `session_counters` dict for tracking write counts, command retries, directory spread per session~~ (done — guardrails state in state.json)
-- **Obligation lifecycle**: The engine supports obligations but the hook layer doesn't create them dynamically. Need a path from PostToolUse checks → obligation creation → obligation gate enforcement
-- **`counts_as` evaluation**: New evaluator capability — after each state change, check if any counts-as rules now fire. Should be a new phase between NC and OG, or part of NC.
-- **`all_obligations_fulfilled` predicate**: New built-in predicate for the evaluator. Checks that no `norm(Agent, Role, obliged, _, _)` facts exist.
-
-### Recommended refactoring before extensions
-1. ~~Move to `src/` layout (enables dogfooding)~~ (done)
-2. ~~Add `session_counters` to hook state model~~ (done — guardrails state)
-3. Add a `create_obligation` method to GovernanceService (currently obligations only come from spec compilation, not runtime events)
-4. Add `all_obligations_fulfilled` as a built-in evaluator predicate
+- ~~**Obligation lifecycle**: Path from PostToolUse checks → obligation creation → obligation gate enforcement~~ (done — counts-as `creates_obligation`, sanctions `obliged`)
+- ~~**`counts_as` evaluation**: After each state change, check if any counts-as rules now fire~~ (done — cascading evaluation in post_tool_use)
+- ~~**`all_obligations_fulfilled` predicate**: Built-in predicate for the evaluator~~ (done)

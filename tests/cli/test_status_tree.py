@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from aorta4llm.cli.cmd_status import run, run_tree
+from aorta4llm.cli.cmd_status import run, run_tree, run_graph
 
 
 class TestStatusTree:
@@ -18,6 +18,7 @@ class TestStatusTree:
         a.events_path = str(events_path) if events_path else None
         a.json_output = False
         a.tree = tree
+        a.graph = False
         return a
 
     def _setup_spec(self, tmp_path, spec_dict):
@@ -339,3 +340,66 @@ class TestStatusTree:
 
         assert "Obligations" in out
         assert "! remove_leaked_secret" in out
+
+
+class TestStatusGraph:
+
+    def test_linear_chain(self, capsys):
+        """counts_as A -> B renders as a chain."""
+        spec = {
+            "achievement_triggers": [
+                {"marks": "A", "command_pattern": "step1"},
+                {"marks": "B", "command_pattern": "step2"},
+            ],
+            "counts_as": [{"when": ["A"], "marks": "B"}],
+        }
+        run_graph(spec, achievements=[])
+        out = capsys.readouterr().out
+        assert "[ ] A" in out
+        assert "[ ] B" in out
+
+    def test_achieved_markers(self, capsys):
+        """Achieved nodes show [*]."""
+        spec = {
+            "achievement_triggers": [{"marks": "A", "command_pattern": "x"}],
+        }
+        run_graph(spec, achievements=["A"])
+        out = capsys.readouterr().out
+        assert "[*] A" in out
+
+    def test_required_before_edge(self, capsys):
+        """required_before norms create unlock edges."""
+        spec = {
+            "achievement_triggers": [{"marks": "tests_pass", "command_pattern": "pytest"}],
+            "norms": [{
+                "type": "required_before",
+                "requires": "tests_pass",
+                "command_pattern": "git push",
+            }],
+        }
+        run_graph(spec, achievements=[])
+        out = capsys.readouterr().out
+        assert "tests_pass" in out
+        assert "unlocks: git push" in out
+
+    def test_fan_in(self, capsys):
+        """Multiple prerequisites fan into one node."""
+        spec = {
+            "achievement_triggers": [
+                {"marks": "A", "command_pattern": "x"},
+                {"marks": "B", "command_pattern": "y"},
+            ],
+            "counts_as": [{"when": ["A", "B"], "marks": "C"}],
+        }
+        run_graph(spec, achievements=["A"])
+        out = capsys.readouterr().out
+        assert "[*] A" in out
+        assert "[ ] B" in out
+        assert "[ ] C" in out
+
+    def test_empty_graph(self, capsys):
+        """No achievements or edges prints a message."""
+        spec = {}
+        run_graph(spec, achievements=[])
+        out = capsys.readouterr().out
+        assert "No achievements" in out

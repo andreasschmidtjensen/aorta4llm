@@ -164,6 +164,40 @@ def validate_spec(spec_dict: dict) -> ValidationResult:
             obj = rule["creates_obligation"].get("objective", "?")
             result.summary.append(f"{label}: {when} -> obligation '{obj}'")
 
+    # Validate sanctions.
+    valid_sanction_types = {"obliged", "hold"}
+    for i, rule in enumerate(spec_dict.get("sanctions", [])):
+        label = f"sanction #{i + 1}"
+        if not isinstance(rule, dict):
+            result.errors.append(f"{label}: must be a mapping")
+            continue
+        if "on_violation_count" not in rule:
+            result.errors.append(f"{label}: missing 'on_violation_count'")
+        else:
+            count = rule["on_violation_count"]
+            if not isinstance(count, int) or count < 1:
+                result.errors.append(f"{label}: 'on_violation_count' must be a positive integer")
+        then = rule.get("then")
+        if not then:
+            result.errors.append(f"{label}: missing 'then' (list of consequences)")
+        elif not isinstance(then, list):
+            result.errors.append(f"{label}: 'then' must be a list")
+        else:
+            for j, cons in enumerate(then):
+                clabel = f"{label} consequence #{j + 1}"
+                if not isinstance(cons, dict):
+                    result.errors.append(f"{clabel}: must be a mapping")
+                    continue
+                ctype = cons.get("type")
+                if not ctype:
+                    result.errors.append(f"{clabel}: missing 'type'")
+                elif ctype not in valid_sanction_types:
+                    result.errors.append(f"{clabel}: unrecognized type '{ctype}' (must be {', '.join(sorted(valid_sanction_types))})")
+                if ctype == "obliged" and "objective" not in cons:
+                    result.errors.append(f"{clabel}: 'obliged' requires 'objective'")
+        count_val = rule.get("on_violation_count", "?")
+        result.summary.append(f"{label}: on {count_val} violations -> {len(then or [])} consequence(s)")
+
     return result
 
 

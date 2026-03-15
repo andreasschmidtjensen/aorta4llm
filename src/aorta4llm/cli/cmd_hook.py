@@ -15,7 +15,7 @@ def add_parser(subparsers):
     p = subparsers.add_parser("hook", help="Claude Code hook handler")
     p.add_argument(
         "hook_command",
-        choices=["pre-tool-use", "post-tool-use", "register", "prompt"],
+        choices=["pre-tool-use", "post-tool-use", "register", "prompt", "session-start"],
     )
     p.add_argument("--org-spec", required=True, help="Path to org spec YAML")
     p.add_argument("--state", default=None, help="State file path")
@@ -63,6 +63,35 @@ def run(args):
         text = hook.get_system_prompt_injection(agent)
         if text:
             print(text)
+
+    elif args.hook_command == "session-start":
+        import io
+        from aorta4llm.cli.cmd_context import run as run_context
+
+        # Capture context output
+        old_stdout = sys.stdout
+        sys.stdout = buf = io.StringIO()
+
+        class _Args:
+            org_spec = args.org_spec
+
+        run_context(_Args())
+        context_text = buf.getvalue()
+        sys.stdout = old_stdout
+
+        # Append obligation injection if agent is registered
+        if agent:
+            obligations = hook.get_system_prompt_injection(agent)
+            if obligations:
+                context_text += "\n" + obligations
+
+        if context_text.strip():
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": context_text.strip(),
+                }
+            }), flush=True)
 
 
 def _respond_hook(result: dict):

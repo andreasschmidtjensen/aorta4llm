@@ -1307,3 +1307,173 @@ class TestCountsAsRules:
         # Re-achieve tests_passing → counts-as should fire again
         self._fire_trigger(hook, "pytest")
         assert "quality_verified" in hook._get_achieved_set()
+
+
+class TestSanctions:
+    """Tests for sanctions — violation tracking and escalation."""
+
+    def _make_hook(self, tmp_path, sanctions=None, norms=None, scope="src/"):
+        spec_dict = {
+            "organization": "sanctions_test",
+            "roles": {
+                "agent": {
+                    "objectives": ["task_complete"],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": norms or [{
+                "role": "agent",
+                "type": "scope",
+                "paths": [scope],
+            }],
+            "sanctions": sanctions or [],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent", scope=scope)
+        return hook
+
+    def _trigger_hard_block(self, hook):
+        """Trigger a hard block by writing outside scope."""
+        return hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "outside/x.py"}},
+            agent="dev",
+        )
+
+    def test_hard_block_increments_violation_count(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        self._trigger_hard_block(hook)
+        assert hook._violation_count == 1
+        self._trigger_hard_block(hook)
+        assert hook._violation_count == 2
+
+    def test_no_sanctions_without_config(self, tmp_path):
+        """Violations are tracked but no sanctions fire without config."""
+        hook = self._make_hook(tmp_path)
+        for _ in range(5):
+            self._trigger_hard_block(hook)
+        assert hook._violation_count == 5
+        assert hook._hold is None
+
+    def test_sanction_hold_on_threshold(self, tmp_path):
+        hook = self._make_hook(tmp_path, sanctions=[
+            {"on_violation_count": 3, "then": [
+                {"type": "hold", "message": "Too many violations"},
+            ]},
+        ])
+        self._trigger_hard_block(hook)
+        self._trigger_hard_block(hook)
+        assert hook._hold is None  # not yet
+        result = self._trigger_hard_block(hook)  # 3rd violation
+        assert hook._hold is not None
+        assert "Too many violations" in hook._hold["reason"]
+
+    def test_sanction_obliged_on_threshold(self, tmp_path):
+        hook = self._make_hook(tmp_path, sanctions=[
+            {"on_violation_count": 2, "then": [
+                {"type": "obliged", "objective": "review_approach"},
+            ]},
+        ])
+        self._trigger_hard_block(hook)
+        self._trigger_hard_block(hook)  # 2nd violation — sanction fires
+        # Check that obligation was created.
+        obligations = hook._service.get_obligations("dev", "agent")
+        assert any(
+            o["objective"] == "review_approach"
+            for o in obligations.get("obligations", [])
+        )
+
+    def test_violation_count_resets_after_sanction(self, tmp_path):
+        hook = self._make_hook(tmp_path, sanctions=[
+            {"on_violation_count": 2, "then": [
+                {"type": "obliged", "objective": "review_approach"},
+            ]},
+        ])
+        self._trigger_hard_block(hook)
+        self._trigger_hard_block(hook)  # sanction fires, count resets
+        assert hook._violation_count == 0
+
+    def test_violation_count_resets_on_continue(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        self._trigger_hard_block(hook)
+        self._trigger_hard_block(hook)
+        assert hook._violation_count == 2
+        hook.clear_hold()
+        assert hook._violation_count == 0
+
+    def test_violation_count_persisted(self, tmp_path):
+        hook = self._make_hook(tmp_path)
+        self._trigger_hard_block(hook)
+        self._trigger_hard_block(hook)
+        # Reload from state
+        state = json.loads((tmp_path / "state.json").read_text())
+        assert state["violation_count"] == 2
+
+    def test_sanction_hold_blocks_subsequent_actions(self, tmp_path):
+        hook = self._make_hook(tmp_path, sanctions=[
+            {"on_violation_count": 1, "then": [
+                {"type": "hold", "message": "Blocked"},
+            ]},
+        ])
+        self._trigger_hard_block(hook)  # triggers hold
+        # Now even in-scope writes should be blocked by hold.
+        result = hook.pre_tool_use(
+            {"tool_name": "Write", "tool_input": {"file_path": "src/ok.py"}},
+            agent="dev",
+        )
+        assert result["decision"] == "block"
+        assert "HOLD" in result["reason"]
+
+    def test_confirmed_soft_block_is_violation(self, tmp_path):
+        """Confirmed soft blocks (retry within window) count as violations."""
+        spec_dict = {
+            "organization": "soft_test",
+            "roles": {
+                "agent": {
+                    "objectives": [],
+                    "capabilities": ["read_file", "write_file", "execute_command"],
+                }
+            },
+            "norms": [{
+                "role": "agent",
+                "type": "forbidden_command",
+                "command_pattern": "rm ",
+                "severity": "soft",
+            }],
+            "sanctions": [
+                {"on_violation_count": 1, "then": [
+                    {"type": "obliged", "objective": "explain_action"},
+                ]},
+            ],
+        }
+        spec_file = tmp_path / "spec.yaml"
+        spec_file.write_text(yaml.dump(spec_dict))
+        hook = GovernanceHook(spec_file, state_path=tmp_path / "state.json")
+        hook.register_agent("dev", "agent")
+        ctx = {"tool_name": "Bash", "tool_input": {"command": "rm temp.txt"}}
+        # First attempt: soft block
+        result = hook.pre_tool_use(ctx, agent="dev")
+        assert result["decision"] == "block"
+        assert hook._violation_count == 0  # not a violation yet
+        # Retry: confirmed — this is the violation
+        result = hook.pre_tool_use(ctx, agent="dev")
+        assert result["decision"] == "approve"
+        assert hook._violation_count == 0  # reset by sanction
+
+    def test_multiple_consequences_in_one_sanction(self, tmp_path):
+        hook = self._make_hook(tmp_path, sanctions=[
+            {"on_violation_count": 2, "then": [
+                {"type": "obliged", "objective": "fix_issues"},
+                {"type": "hold", "message": "Fix required"},
+            ]},
+        ])
+        self._trigger_hard_block(hook)
+        self._trigger_hard_block(hook)
+        # Both should fire: obligation + hold
+        obligations = hook._service.get_obligations("dev", "agent")
+        assert any(
+            o["objective"] == "fix_issues"
+            for o in obligations.get("obligations", [])
+        )
+        assert hook._hold is not None

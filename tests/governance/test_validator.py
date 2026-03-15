@@ -182,6 +182,78 @@ class TestValidateSpecFile:
         assert not r.valid
         assert any("objective" in e for e in r.errors)
 
+    def test_sanctions_valid(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "sanctions": [
+                {"on_violation_count": 3, "then": [{"type": "obliged", "objective": "fix_it"}]},
+            ],
+        })
+        assert r.valid
+        assert any("sanction" in s for s in r.summary)
+
+    def test_sanctions_missing_count(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "sanctions": [{"then": [{"type": "hold"}]}],
+        })
+        assert not r.valid
+        assert any("on_violation_count" in e for e in r.errors)
+
+    def test_sanctions_invalid_count(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "sanctions": [{"on_violation_count": 0, "then": [{"type": "hold"}]}],
+        })
+        assert not r.valid
+        assert any("positive integer" in e for e in r.errors)
+
+    def test_sanctions_missing_then(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "sanctions": [{"on_violation_count": 3}],
+        })
+        assert not r.valid
+        assert any("then" in e for e in r.errors)
+
+    def test_sanctions_invalid_consequence_type(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "sanctions": [
+                {"on_violation_count": 3, "then": [{"type": "banish"}]},
+            ],
+        })
+        assert not r.valid
+        assert any("banish" in e for e in r.errors)
+
+    def test_sanctions_obliged_missing_objective(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "sanctions": [
+                {"on_violation_count": 3, "then": [{"type": "obliged"}]},
+            ],
+        })
+        assert not r.valid
+        assert any("objective" in e for e in r.errors)
+
+    def test_sanctions_hold_valid(self):
+        r = validate_spec({
+            "organization": "test",
+            "roles": {"agent": {"objectives": [], "capabilities": []}},
+            "sanctions": [
+                {"on_violation_count": 5, "then": [
+                    {"type": "hold", "message": "Too many violations"},
+                ]},
+            ],
+        })
+        assert r.valid
+
     @pytest.mark.parametrize("template", ["safe-agent", "test-gate"])
     def test_existing_templates_are_valid(self, template):
         path = _TEMPLATES_DIR / f"{template}.yaml"

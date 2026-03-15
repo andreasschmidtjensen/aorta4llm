@@ -55,6 +55,7 @@ def rebuild_hooks(spec: dict, spec_path: Path) -> None:
 
     pre_cmd = f"aorta hook pre-tool-use --org-spec {spec_rel} --agent agent --events-path {events_rel}"
     post_cmd = f"aorta hook post-tool-use --org-spec {spec_rel} --agent agent --events-path {events_rel}"
+    session_cmd = f"aorta hook session-start --org-spec {spec_rel} --agent agent --events-path {events_rel}"
 
     write_matcher = "Write|Edit|NotebookEdit|Bash"
     if has_protected:
@@ -63,6 +64,9 @@ def rebuild_hooks(spec: dict, spec_path: Path) -> None:
     has_sensitive = any(v in ("read-only", "no-access") for v in spec.get("access", {}).values())
 
     hooks_config: dict = {
+        "SessionStart": [{
+            "hooks": [{"type": "command", "command": session_cmd}],
+        }],
         "PreToolUse": [{
             "matcher": write_matcher,
             "hooks": [{"type": "command", "command": pre_cmd}],

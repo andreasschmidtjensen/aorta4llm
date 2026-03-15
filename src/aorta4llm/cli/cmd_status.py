@@ -12,6 +12,7 @@ def add_parser(subparsers):
     p.add_argument("--events-path", default=None, help="Events JSONL path")
     p.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
     p.add_argument("--tree", action="store_true", help="Show policy as a tree view")
+    p.add_argument("--graph", action="store_true", help="Show achievement dependency graph")
     p.set_defaults(func=run)
 
 
@@ -219,6 +220,90 @@ def run_tree(spec: dict, achievements: list[str], packs: list[str],
             print(f"{branch}Packs: {', '.join(packs)}")
 
 
+def run_graph(spec: dict, achievements: list[str]):
+    """Render an ASCII dependency graph of achievements and gates."""
+    triggers = spec.get("achievement_triggers", [])
+    counts_as = spec.get("counts_as", [])
+    norms = spec.get("norms", [])
+    achieved_set = set(achievements)
+
+    # Build edges: source -> target
+    edges: list[tuple[str, str]] = []
+    # From counts_as: when [A, B] marks C -> edges A->C, B->C
+    for ca in counts_as:
+        target = ca.get("marks", "")
+        for src in ca.get("when", []):
+            edges.append((src, target))
+
+    # From required_before: requires X, command_pattern Y -> X -> "unlocks: Y"
+    for norm in norms:
+        if norm.get("type") == "required_before":
+            src = norm.get("requires", "")
+            pattern = norm.get("command_pattern", "?")
+            target = f"unlocks: {pattern}"
+            edges.append((src, target))
+
+    # Collect all nodes
+    all_nodes: set[str] = set()
+    for trigger in triggers:
+        all_nodes.add(trigger.get("marks", ""))
+    for ca in counts_as:
+        all_nodes.add(ca.get("marks", ""))
+        all_nodes.update(ca.get("when", []))
+    for src, tgt in edges:
+        all_nodes.add(src)
+        all_nodes.add(tgt)
+    all_nodes.discard("")
+
+    if not all_nodes:
+        print("No achievements or dependency edges to graph.")
+        return
+
+    def _marker(node: str) -> str:
+        if node.startswith("unlocks: "):
+            return "   "
+        return "[*]" if node in achieved_set else "[ ]"
+
+    # Find roots (no incoming edges) and build adjacency
+    children: dict[str, list[str]] = {n: [] for n in all_nodes}
+    has_parent: set[str] = set()
+    for src, tgt in edges:
+        if src in children:
+            children[src].append(tgt)
+        has_parent.add(tgt)
+
+    roots = [n for n in all_nodes if n not in has_parent]
+    if not roots:
+        roots = sorted(all_nodes)[:1]  # fallback: pick first alphabetically
+
+    # Render chains
+    visited: set[str] = set()
+
+    def _render_chain(node: str, indent: str = ""):
+        if node in visited:
+            print(f"{indent}{_marker(node)} {node} (see above)")
+            return
+        visited.add(node)
+        print(f"{indent}{_marker(node)} {node}")
+        kids = children.get(node, [])
+        for i, child in enumerate(kids):
+            is_last = i == len(kids) - 1
+            if len(kids) == 1:
+                # Linear chain
+                print(f"{indent}  |")
+                print(f"{indent}  v")
+                _render_chain(child, indent)
+            else:
+                # Fan-out
+                branch = "└" if is_last else "├"
+                print(f"{indent}  {branch}─>", end=" ")
+                _render_chain(child, indent + ("    " if is_last else "  │ "))
+
+    for root in sorted(roots):
+        _render_chain(root)
+        print()
+
+
 def run(args):
     import yaml
     from aorta4llm.cli.spec_utils import find_org_spec
@@ -276,6 +361,12 @@ def run(args):
             state_data = json.loads(state_path.read_text())
             hold = state_data.get("hold")
         run_tree(resolved, achievements, packs, hold=hold, obligations=obligations)
+        return
+
+    if args.graph:
+        from aorta4llm.governance.compiler import _resolve_includes
+        resolved = _resolve_includes(dict(spec))
+        run_graph(resolved, achievements)
         return
 
     if args.json_output:

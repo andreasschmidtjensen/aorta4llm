@@ -1,0 +1,70 @@
+organization: safe_agent
+include:
+- tool-hygiene
+bash_analysis: true
+safe_commands:
+- git diff
+- git log
+- git status
+- npm test
+- pytest
+roles:
+  agent:
+    objectives:
+    - quality_verified
+    capabilities:
+    - execute_command
+    - read_file
+    - write_file
+access:
+  src/: read-write
+  tests/: read-write
+  docs/: read-write
+  .env: no-access
+  .env.local: no-access
+  secrets/: no-access
+  .ssh/: no-access
+  '*.key': no-access
+  '*.pem': no-access
+  '*.secret': no-access
+  config/: read-only
+norms:
+- role: agent
+  type: required_before
+  blocks: execute_command
+  command_pattern: git commit
+  requires: quality_verified
+- role: agent
+  type: required_before
+  blocks: execute_command
+  command_pattern: git push
+  requires: quality_verified
+achievement_triggers:
+- tool: Bash
+  command_pattern: pytest|python -m pytest|uv run pytest
+  exit_code: 0
+  marks: tests_passing
+  reset_on_file_change: true
+- tool: Bash
+  command_pattern: aorta validate
+  exit_code: 0
+  marks: spec_valid
+  reset_on_file_change: true
+counts_as:
+- when: [tests_passing, spec_valid]
+  marks: quality_verified
+guardrails:
+  per_file_rewrites:
+    threshold: 5
+    action: hold
+  failure_rate:
+    threshold: 0.5
+    action: warning
+  bash_commands:
+    threshold: 30
+    action: warning
+sanctions:
+- on_violation_count: 5
+  then:
+  - type: hold
+    message: "5 policy violations — review your approach before continuing"

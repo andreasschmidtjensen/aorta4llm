@@ -67,7 +67,7 @@ _AORTA_CMD_PATTERN = re.compile(
 
 # Read-only aorta subcommands that agents may run.
 _SAFE_AORTA_SUBCOMMANDS = frozenset({
-    "status", "permissions", "explain", "validate", "dry-run", "doctor", "watch",
+    "status", "permissions", "explain", "validate", "dry-run", "doctor", "watch", "context", "replay",
 })
 
 
@@ -260,6 +260,7 @@ class GovernanceHook:
         extras = self._load_spec_extras(self._org_spec_path)
         self._triggers = extras[0]
         self._counts_as: list[dict] = extras[6]
+        self._sanctions: list[dict] = extras[7]
         self._bash_analysis = extras[1]
         self._safe_commands = extras[2]
         self._events: list[dict] = []
@@ -269,6 +270,7 @@ class GovernanceHook:
         self._soft_block_window = extras[3]
         self._sensitive_paths = extras[4]
         self._thrashing_config: dict = extras[5]
+        self._violation_count: int = 0
         self._action_ring: list[dict] = []
         self._hold: dict | None = None  # {"reason": "...", "ts": ...} or None
         self._file_write_counts: dict[str, int] = {}  # path -> count
@@ -279,8 +281,8 @@ class GovernanceHook:
         self._org_spec_name = self._org_spec_path.stem
         self._replay_state()
 
-    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict, list[dict]]:
-        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, sensitive paths, guardrails, and counts_as."""
+    def _load_spec_extras(self, org_spec_path: Path) -> tuple[list[dict], bool, frozenset[str], int, frozenset[str], dict, list[dict], list[dict]]:
+        """Load achievement_triggers, bash_analysis flag, safe_commands, soft_block_window, sensitive paths, guardrails, counts_as, and sanctions."""
         try:
             with open(org_spec_path) as f:
                 spec = yaml.safe_load(f)
@@ -300,9 +302,10 @@ class GovernanceHook:
                 sensitive,
                 guardrails,
                 spec.get("counts_as", []),
+                spec.get("sanctions", []),
             )
         except Exception:
-            return [], False, frozenset(), 60, frozenset(), {}, []
+            return [], False, frozenset(), 60, frozenset(), {}, [], []
 
     def _replay_state(self):
         """Replay events from state file to reconstruct service state."""
@@ -317,6 +320,7 @@ class GovernanceHook:
         self._hold = state.get("hold", None)
         self._file_write_counts = state.get("file_write_counts", {})
         self._bash_command_count = state.get("bash_command_count", 0)
+        self._violation_count = state.get("violation_count", 0)
         for event in self._events:
             etype = event["type"]
             if etype == "register":
@@ -360,6 +364,8 @@ class GovernanceHook:
             state["file_write_counts"] = self._file_write_counts
         if self._bash_command_count:
             state["bash_command_count"] = self._bash_command_count
+        if self._violation_count:
+            state["violation_count"] = self._violation_count
         self._state_path.write_text(json.dumps(state, indent=2))
 
     def clear_transient_state(self):
@@ -369,15 +375,16 @@ class GovernanceHook:
         self._save_state()
 
     def clear_hold(self):
-        """Clear the active hold and reset guardrails counters.
+        """Clear the active hold and reset guardrails/sanctions counters.
 
-        Called by `aorta continue`. Resets ring buffer and file write counts
-        so that budget thresholds become periodic checkpoints.
+        Called by `aorta continue`. Resets ring buffer, file write counts,
+        and violation count so that thresholds become periodic checkpoints.
         """
         self._hold = None
         self._action_ring.clear()
         self._file_write_counts.clear()
         self._bash_command_count = 0
+        self._violation_count = 0
         self._save_state()
 
     def register_agent(self, agent: str, role: str, scope: str = "",
@@ -522,6 +529,13 @@ class GovernanceHook:
                     "decision": soft_result["decision"],
                     "reason": _truncate_reason(result.reason), "severity": "soft",
                 })
+                # Confirmed soft block = violation (agent proceeded despite warning).
+                if soft_result["decision"] == "approve":
+                    short = _shorten_block_reason(result.reason)
+                    sanction_result = self._record_violation(
+                        agent_id, role, action, f"soft-block confirmed: {short}")
+                    if sanction_result:
+                        return sanction_result
                 return soft_result
             short_reason = _shorten_block_reason(result.reason)
             display = _display_action(action, path)
@@ -544,6 +558,11 @@ class GovernanceHook:
             })
             if path:
                 user_reason += f"\n  To grant a one-time exception: aorta allow-once {path}"
+            # Record violation and check sanctions.
+            sanction_result = self._record_violation(
+                agent_id, role, action, short_reason)
+            if sanction_result:
+                return sanction_result
             return {"decision": "block", "reason": user_reason}
 
         log({
@@ -803,6 +822,72 @@ class GovernanceHook:
                     changed = True
 
         self._save_state()
+
+    def _record_violation(self, agent_id: str, role: str, action: str,
+                          reason: str) -> dict | None:
+        """Record a norm violation and evaluate sanctions.
+
+        Increments the violation counter and checks if any sanction
+        thresholds have been reached. Returns a sanction result dict
+        if a sanction was applied (hold or obligation), None otherwise.
+        """
+        self._violation_count += 1
+        self._log({
+            "type": "violation", "agent": agent_id, "role": role,
+            "action": action, "reason": reason,
+            "count": self._violation_count,
+        })
+        self._save_state()
+        return self._evaluate_sanctions(agent_id, role)
+
+    def _evaluate_sanctions(self, agent_id: str, role: str) -> dict | None:
+        """Check sanctions rules against the current violation count.
+
+        Applies the first matching sanction, resets violation count,
+        and returns a result dict if a hold was triggered.
+        """
+        if not self._sanctions:
+            return None
+        for rule in self._sanctions:
+            threshold = rule.get("on_violation_count")
+            if threshold is None:
+                continue
+            if self._violation_count < threshold:
+                continue
+            # Sanction matched — apply consequences and reset count.
+            self._violation_count = 0
+            self._save_state()
+            for consequence in rule.get("then", []):
+                ctype = consequence.get("type")
+                if ctype == "obliged":
+                    objective = consequence.get("objective", "")
+                    if objective:
+                        deadline = consequence.get("deadline", "false")
+                        self.create_obligation(agent_id, role, objective, deadline)
+                        self._log({
+                            "type": "sanction", "agent": agent_id,
+                            "sanction": "obliged", "objective": objective,
+                            "threshold": threshold,
+                        })
+                elif ctype == "hold":
+                    message = consequence.get("message", f"Sanction: {threshold} violations reached")
+                    self._hold = {"reason": message, "ts": time.time()}
+                    self._save_state()
+                    self._log({
+                        "type": "sanction", "agent": agent_id,
+                        "sanction": "hold", "reason": message,
+                        "threshold": threshold,
+                    })
+                    return {
+                        "decision": "block",
+                        "reason": (
+                            f"SANCTION: {message}\n"
+                            f"All actions are now blocked until the hold is cleared.\n"
+                            f"To continue: aorta continue"
+                        ),
+                    }
+            return None  # sanctions applied but no hold
+        return None
 
     def _check_guardrails(self, context: dict, agent_id: str) -> dict | None:
         """Run guardrails checks after a tool use completes.
@@ -1083,7 +1168,7 @@ def main():
     )
     parser.add_argument(
         "command",
-        choices=["pre-tool-use", "post-tool-use", "register", "prompt"],
+        choices=["pre-tool-use", "post-tool-use", "register", "prompt", "session-start"],
     )
     parser.add_argument("--org-spec", required=True, help="Path to org spec YAML")
     parser.add_argument("--state", default=None, help="State file path (default: .aorta/state.json)")
@@ -1126,6 +1211,30 @@ def main():
         text = hook.get_system_prompt_injection(args.agent)
         if text:
             print(text)
+
+    elif args.command == "session-start":
+        from aorta4llm.cli.cmd_context import run as run_context
+        import io
+        # Capture context output
+        old_stdout = sys.stdout
+        sys.stdout = buf = io.StringIO()
+        class _Args:
+            org_spec = args.org_spec
+        run_context(_Args())
+        context_text = buf.getvalue()
+        sys.stdout = old_stdout
+        # Also append obligation injection if agent is registered
+        if args.agent:
+            obligations = hook.get_system_prompt_injection(args.agent)
+            if obligations:
+                context_text += "\n" + obligations
+        if context_text.strip():
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": context_text.strip(),
+                }
+            }), flush=True)
 
 
 def _respond(obj: dict):
