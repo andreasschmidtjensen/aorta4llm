@@ -57,7 +57,7 @@ def _format_event(event: dict) -> str | None:
             color = _SEVERITY_COLORS.get(severity, "")
             sev_str = f" {color}[{severity}]{_RESET}"
 
-        command = event.get("command", "")
+        command = event.get("command", "").replace("\n", " ").strip()
         line = f"{ts} {symbol} {agent} {action}"
         if path:
             line += f" {path}"
@@ -193,14 +193,12 @@ class _Dashboard:
 
         access = self._spec.get("access", {})
         if access:
-            lines.append("")
             lines.append("\033[4mAccess\033[0m")
             for path, level in access.items():
                 lines.append(f"  {path:<16s} {level}")
 
         norms = self._spec.get("norms", [])
         if norms:
-            lines.append("")
             lines.append("\033[4mNorms\033[0m")
             for norm in norms:
                 ntype = norm.get("type", "?")
@@ -215,7 +213,6 @@ class _Dashboard:
 
         triggers = self._spec.get("achievement_triggers", [])
         if triggers:
-            lines.append("")
             lines.append("\033[4mAchievements\033[0m")
             for trigger in triggers:
                 mark = trigger.get("marks", "?")
@@ -225,7 +222,6 @@ class _Dashboard:
         if exceptions:
             from aorta4llm.integration.hooks import EXCEPTION_TTL
             now = time.time()
-            lines.append("")
             lines.append("\033[4mAllow-once\033[0m")
             for exc in exceptions:
                 ts = exc.get("ts", 0)
