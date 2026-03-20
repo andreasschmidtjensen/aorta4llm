@@ -102,7 +102,7 @@ _PATH = r"[^\s;|&)]+"
 _REDIRECT_RE = re.compile(r">{1,2}\s*(" + _PATH + r")")
 _TEE_RE = re.compile(r"\btee\s+(?:-a\s+)?(" + _PATH + r")")
 _CP_RE = re.compile(r"\bcp\s+(?:-\w+\s+)*\S+\s+(" + _PATH + r")")
-_MV_RE = re.compile(r"\bmv\s+(?:-\w+\s+)*\S+\s+(" + _PATH + r")")
+_MV_RE = re.compile(r"\bmv\s+(?:-\w+\s+)*(" + _PATH + r")\s+(" + _PATH + r")")
 _RM_RE = re.compile(r"\brm\s+(?:-\w+\s+)*(.+)")
 _MKDIR_RE = re.compile(r"\bmkdir\s+(?:-\w+\s+)*(" + _PATH + r")")
 _TOUCH_RE = re.compile(r"\btouch\s+(" + _PATH + r")")
@@ -133,7 +133,9 @@ def _heuristic_analyze(command: str) -> BashAnalysis | None:
         return None
 
     # Too many pipes — complex, bail to LLM.
-    segments = stripped.split("|")
+    # Strip quoted strings first so '|' inside quotes isn't counted.
+    unquoted = re.sub(r'"[^"]*"|\'[^\']*\'', '', stripped)
+    segments = unquoted.split("|")
     if len(segments) > 2:
         return None
 
@@ -147,7 +149,9 @@ def _heuristic_analyze(command: str) -> BashAnalysis | None:
     for m in _CP_RE.finditer(stripped):
         writes.append(m.group(1))
     for m in _MV_RE.finditer(stripped):
-        writes.append(m.group(1))
+        is_destructive = True  # mv removes the source file
+        writes.append(m.group(1))  # source (removed)
+        writes.append(m.group(2))  # destination
     for m in _MKDIR_RE.finditer(stripped):
         writes.append(m.group(1))
     for m in _TOUCH_RE.finditer(stripped):

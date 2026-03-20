@@ -201,7 +201,9 @@ class TestHeuristicAnalysis:
     def test_mv_detected(self):
         r = _heuristic_analyze("mv old.py new.py")
         assert r is not None
-        assert "new.py" in r.writes
+        assert "old.py" in r.writes  # source removed
+        assert "new.py" in r.writes  # destination
+        assert r.is_destructive  # mv removes source
 
     def test_tee_detected(self):
         r = _heuristic_analyze("echo hello | tee output.txt")
@@ -291,3 +293,18 @@ class TestHeuristicAnalysis:
         assert r is not None
         assert "b.py" in r.writes
         assert "b.py;" not in r.writes
+
+    def test_mv_in_compound_command_detected(self):
+        """mv in a && chain with grep containing quoted pipes should be caught."""
+        cmd = 'mv src/test/resources/log4j2-test.xml /tmp/log4j2-test.xml.bak && mvn test 2>&1 | grep -E "(syslog|UnknownHost)"'
+        r = _heuristic_analyze(cmd)
+        assert r is not None
+        assert "src/test/resources/log4j2-test.xml" in r.writes
+        assert "/tmp/log4j2-test.xml.bak" in r.writes
+        assert r.is_destructive
+
+    def test_pipes_inside_quotes_not_counted(self):
+        """Pipe chars inside quoted strings should not count as pipe segments."""
+        cmd = 'ls | grep -E "(foo|bar|baz)"'
+        r = _heuristic_analyze(cmd)
+        assert r is not None  # should not bail to LLM

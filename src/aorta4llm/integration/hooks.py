@@ -224,6 +224,12 @@ def _is_memory_path(path: str) -> bool:
     return path.startswith(prefix + "/") or path == prefix
 
 
+def _is_plan_path(path: str) -> bool:
+    """Check if an absolute path is inside the Claude Code plans directory."""
+    prefix = str(Path.home() / ".claude" / "plans")
+    return path.startswith(prefix + "/") or path == prefix
+
+
 def _format_piped_notice(skipped: list[str]) -> str:
     """Format a notice when piped commands skip achievement triggers."""
     marks = ", ".join(skipped)
@@ -556,6 +562,17 @@ class GovernanceHook:
                 "type": "check", "agent": agent_id, "role": role,
                 "action": action, "path": params.get("path", abs_path),
                 "decision": "approve", "reason": "memory write allowed",
+            })
+            return {"decision": "approve"}
+
+        # Allow Claude Code plan files — internal tool state, not user code.
+        # Check before PROTECTED_PATHS since plans live under ~/.claude/.
+        if (action in ("write_file", "read_file")
+                and abs_path and _is_plan_path(abs_path)):
+            log({
+                "type": "check", "agent": agent_id, "role": role,
+                "action": action, "path": params.get("path", abs_path),
+                "decision": "approve", "reason": "plan file allowed",
             })
             return {"decision": "approve"}
 
