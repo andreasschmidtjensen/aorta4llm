@@ -70,7 +70,7 @@ _AORTA_CMD_PATTERN = re.compile(
 
 # Read-only aorta subcommands that agents may run.
 _SAFE_AORTA_SUBCOMMANDS = frozenset({
-    "status", "permissions", "explain", "validate", "dry-run", "doctor", "watch", "context", "replay",
+    "status", "permissions", "explain", "validate", "dry-run", "doctor", "watch", "context", "replay", "timing",
 })
 
 
@@ -1318,6 +1318,7 @@ class GovernanceHook:
 
 def main():
     """CLI entry point for Claude Code hooks."""
+    t0 = time.time()
     parser = argparse.ArgumentParser(
         prog="integration.hooks",
         description="aorta4llm governance hooks for Claude Code",
@@ -1336,6 +1337,7 @@ def main():
 
     args = parser.parse_args()
     hook = GovernanceHook(args.org_spec, args.state, events_path=args.events_path)
+    t1 = time.time()
 
     if args.command == "register":
         if not args.agent or not args.role:
@@ -1404,6 +1406,15 @@ def main():
                     "additionalContext": context_text.strip(),
                 }
             }), flush=True)
+
+    t2 = time.time()
+    hook._log({
+        "type": "timing",
+        "command": args.command,
+        "init_ms": round((t1 - t0) * 1000, 1),
+        "handle_ms": round((t2 - t1) * 1000, 1),
+        "total_ms": round((t2 - t0) * 1000, 1),
+    })
 
 
 def _respond(obj: dict):

@@ -342,6 +342,17 @@ aorta replay --last --format full      # full output with divergence points
 
 Shows what your policy would have blocked or approved. Distinguishes policy blocks from sanctions and held (counterfactual) events.
 
+## Timing
+
+Measure hook latency to see how much overhead governance adds:
+
+```bash
+aorta timing                    # show stats from recent hook invocations
+aorta timing -n 50              # last 50 invocations only
+```
+
+Shows count, average, p50, p95, and max latency per hook type (pre-tool-use, post-tool-use), with init vs handle breakdown. Timing data is recorded automatically in `events.jsonl`.
+
 ## Re-initializing
 
 Running `aorta init` when aorta hooks already exist will exit with an error. Use `--reinit` to overwrite:

@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 
 
 def add_parser(subparsers):
@@ -28,12 +29,14 @@ def add_parser(subparsers):
 
 
 def run(args):
+    t0 = time.time()
     from aorta4llm.integration.hooks import GovernanceHook
 
     # Support AORTA_AGENT env var as fallback for --agent.
     agent = args.agent or os.environ.get("AORTA_AGENT")
 
     hook = GovernanceHook(args.org_spec, args.state, events_path=args.events_path)
+    t1 = time.time()
 
     if args.hook_command == "register":
         if not agent or not args.role:
@@ -105,6 +108,15 @@ def run(args):
                     "additionalContext": context_text.strip(),
                 }
             }), flush=True)
+
+    t2 = time.time()
+    hook._log({
+        "type": "timing",
+        "command": args.hook_command,
+        "init_ms": round((t1 - t0) * 1000, 1),
+        "handle_ms": round((t2 - t1) * 1000, 1),
+        "total_ms": round((t2 - t0) * 1000, 1),
+    })
 
 
 def _respond_hook(result: dict):

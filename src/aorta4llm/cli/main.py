@@ -33,6 +33,7 @@ def main():
     from aorta4llm.cli.cmd_continue import add_parser as add_continue
     from aorta4llm.cli.cmd_context import add_parser as add_context
     from aorta4llm.cli.cmd_replay import add_parser as add_replay
+    from aorta4llm.cli.cmd_timing import add_parser as add_timing
 
     add_validate(sub)
     add_dry_run(sub)
@@ -56,6 +57,7 @@ def main():
     add_continue(sub)
     add_context(sub)
     add_replay(sub)
+    add_timing(sub)
 
     args = parser.parse_args()
     if not args.command:

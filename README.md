@@ -25,6 +25,7 @@ aorta4llm enforces governance at the tool call layer. A YAML spec declares what 
 - **Achievement workflows**: Counts-as rules (`tests_passing + spec_valid = quality_verified`), cascading dependencies, obligation chains.
 - **Context injection**: Governance rules injected into agent context at session start via SessionStart hook. Agent knows the rules before its first action.
 - **Conversation replay**: Validate policies against real session traces with `aorta replay`. See what your policy would have done during yesterday's session.
+- **Hook timing**: Measure governance overhead with `aorta timing`. Shows per-hook latency stats (avg, p50, p95, max) with init/handle breakdown.
 - **Policy visualization**: Tree view (`aorta status --tree`), dependency graph (`aorta status --graph`), live dashboard (`aorta watch --dashboard`).
 - **Policy packs**: Composable policy modules. `include: [tool-hygiene]` adds norms from a shared pack.
 

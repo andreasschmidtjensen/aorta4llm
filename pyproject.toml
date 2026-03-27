@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "aorta4llm"
-version = "0.3.1"
+version = "0.3.2"
 description = "Organizational reasoning for LLM agent systems"
 requires-python = ">=3.10"
 dependencies = [
